@@ -1,17 +1,17 @@
 {
 	"name": "OK.ru",
-	"description": "Fuente no oficial de OK.ru (Odnoklassniki) para GrayJay: búsqueda y reproducción de videos.",
+	"description": "Plugin no oficial para reproducir videos de OK.ru (Odnoklassniki) dentro de GrayJay",
 	"author": "Lucas",
 	"authorUrl": "",
 
-	"sourceUrl": "https://cheito55.github.io/Ok.ru-grayjay-plugins/OkRuConfig.json",
+	"sourceUrl": "REEMPLAZAR: URL pública donde vas a alojar este OkruConfig.json",
 	"repositoryUrl": "",
-	"scriptUrl": "./OkRuScript.js",
-	"version": 9,
+	"scriptUrl": "./OkruScript.js",
+	"version": 1,
 
-	"iconUrl": "./okru_icon.png",
+	"iconUrl": "./okru-icon.png",
 
-	"id": "3258bd8a-e9b8-42d1-9b16-49e8336d4f1a",
+	"id": "REEMPLAZAR: generar un UUID nuevo en https://www.uuidgenerator.net/",
 
 	"scriptSignature": "",
 	"scriptPublicKey": "",
@@ -24,11 +24,6 @@
 		"ok.ru",
 		"www.ok.ru",
 		"m.ok.ru",
-		"vd.mycdn.me",
-		"i.mycdn.me",
-		"coub-ok.mycdn.me",
-		"vkuser.net",
-		"iv.okcdn.ru",
-		"okcdn.ru"
+		"mobile.ok.ru"
 	]
 }
