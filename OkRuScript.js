@@ -120,14 +120,38 @@ source.search = function (query, type, order, filters) {
     }
 
     try {
+        // Paso previo: pedir la home para conseguir cookies de sesión
+        // anónima. Sin esto, el endpoint de búsqueda parece devolver
+        // siempre una página genérica (de tamaño fijo, sin resultados),
+        // sin importar qué se busque -- señal de que el servidor exige
+        // una sesión mínima antes de aceptar la búsqueda.
+        let cookieHeader = "";
+        try {
+            const homeResp = http.GET("https://ok.ru/video", {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            }, false);
+            if (homeResp.headers && homeResp.headers["set-cookie"]) {
+                cookieHeader = homeResp.headers["set-cookie"];
+            } else if (homeResp.headers && homeResp.headers["Set-Cookie"]) {
+                cookieHeader = homeResp.headers["Set-Cookie"];
+            }
+        } catch (e) {
+            // Si falla este paso, seguimos igual sin cookie (mejor que cortar todo)
+        }
+
         const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
 
-        const resp = http.GET(searchUrl, {
+        const searchHeaders = {
             "Referer": "https://ok.ru/video",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
-        }, false);
+        };
+        if (cookieHeader) {
+            searchHeaders["Cookie"] = cookieHeader;
+        }
+
+        const resp = http.GET(searchUrl, searchHeaders, false);
 
         if (!resp.isOk) {
             return new VideoPager([debugItem("HTTP status " + resp.code + " al pedir la búsqueda")], false, {});
@@ -140,6 +164,8 @@ source.search = function (query, type, order, filters) {
 
         const hasMarker = html.indexOf('"movie":{"info"') !== -1;
         const hasLoginWall = html.indexOf("\u041f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d") !== -1;
+        const titleMatch = html.match(/<title>([^<]*)<\/title>/);
+        const pageTitle = titleMatch ? titleMatch[1] : "(sin <title>)";
 
         const results = [];
         // Cada resultado trae un bloque "movie":{"info":{...}} con
@@ -181,7 +207,8 @@ source.search = function (query, type, order, filters) {
                     "DEBUG: sinMatches. len=" + html.length +
                     " hasMarker=" + hasMarker +
                     " hasLoginWall=" + hasLoginWall +
-                    " inicio=" + html.substring(0, 150).replace(/\s+/g, " ")
+                    " cookie=" + (cookieHeader ? "si" : "no") +
+                    " title=" + pageTitle
                 )
             ], false, {});
         }
