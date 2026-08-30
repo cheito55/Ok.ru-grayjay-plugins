@@ -1,19 +1,37 @@
 {
-    "name": "PoseidonHD",
-    "description": "Plugin para el catálogo de PoseidonHD",
-    "author": "Lucas",
-    "authorUrl": "",
-    "sourceUrl": "https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/PoseidonHDConfig.json",
-    "repositoryUrl": "https://github.com/TU_USUARIO/TU_REPO",
-    "scriptUrl": "https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/PoseidonHDScript.js",
-    "version": 1,
-    "iconUrl": "https://www.poseidonhd2.co/wp-content/uploads/2021/04/favicon.png",
-    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "packages": ["Http", "DOMParser"],
-    "allowEval": false,
-    "allowUrls": [
-        "www.poseidonhd2.co",
-        "poseidonhd2.co",
-        "*" 
-    ]
+"name": "OK.ru",
+"description": "Plugin no oficial para reproducir videos de OK.ru (Odnoklassniki) dentro de GrayJay",
+"author": "Lucas",
+"authorUrl": "",
+
+"sourceUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuConfig.json",
+"repositoryUrl": "https://github.com/cheito55/Ok.ru-grayjay-plugins",
+"scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript.js",
+"version": 1,
+
+"iconUrl": "",
+
+"id": "62af0e2f-bfd9-489f-afe1-f66583d2f7d0",
+
+"scriptSignature": "",
+"scriptPublicKey": "",
+
+"packages": ["Http", "DOMParser", "Utilities"],
+
+"allowEval": false,
+
+"allowUrls": [
+"ok.ru",
+"www.ok.ru",
+"m.ok.ru",
+"mobile.ok.ru"
+],
+
+"authentication": {
+"userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+"loginUrl": "https://ok.ru/",
+"completionUrl": "https://ok.ru/feed*",
+"cookiesToFind": ["JSESSIONID", "AUTHCODE", "domain_sid"],
+"cookiesExclOthers": false
 }
+} 
