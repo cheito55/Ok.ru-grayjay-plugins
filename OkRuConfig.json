@@ -1,25 +1,18 @@
 {
 	"name": "OK.ru",
-	"description": "Fuente no oficial de OK.ru (Odnoklassniki) para GrayJay: búsqueda y reproducción de videos.",
+	"description": "Fuente no oficial de OK.ru para Grayjay con soporte de servidor puente.",
 	"author": "Lucas",
 	"authorUrl": "",
-
 	"sourceUrl": "https://cheito55.github.io/Ok.ru-grayjay-plugins/OkRuConfig.json",
 	"repositoryUrl": "",
 	"scriptUrl": "./OkRuScript.js",
-	"version": 4,
-
+	"version": 3,
 	"iconUrl": "./okru_icon.png",
-
 	"id": "3258bd8a-e9b8-42d1-9b16-49e8336d4f1a",
-
 	"scriptSignature": "",
 	"scriptPublicKey": "",
-
 	"packages": ["Http", "DOMParser", "Utilities"],
-
 	"allowEval": false,
-
 	"allowUrls": [
 		"ok.ru",
 		"www.ok.ru",
@@ -27,6 +20,6 @@
 		"vd.mycdn.me",
 		"i.mycdn.me",
 		"coub-ok.mycdn.me",
-		"ok-ru-grayjay-plugins.vercel.app/",
-	]	
+		"ok-ru-grayjay-plugins.vercel.app"
+	]
 }
