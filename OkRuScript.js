@@ -1,15 +1,3 @@
-// ============================================================================
-// Plugin no oficial de OK.ru para GrayJay
-//
-// IMPORTANTE (leer antes de usar):
-// - Esto es un punto de partida funcional, escrito siguiendo la convención de
-//   plugins de GrayJay (misma familia de clases que usan los plugins de
-//   Dailymotion, Rutube, PeerTube, etc. de la comunidad).
-// - NO pude probarlo en vivo contra ok.ru (mi entorno no tiene acceso a
-//   internet), así que los nombres exactos de algunos campos del JSON interno
-//   de ok.ru pueden haber cambiado. Están marcados con "// VERIFICAR" abajo.
-// ============================================================================
-
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
@@ -97,13 +85,6 @@ source.getContentDetails = function (url) {
 	if (videoSources.length === 0) {
 		throw new ScriptException("No se encontraron URLs de video reproducibles para este contenido (puede estar geobloqueado o requerir login).");
 	}
-
-	throw new ScriptException("DEBUG_SOURCES: " + JSON.stringify({
-		duration_raw: movie.duration,
-		videos: metadata.videos,
-		hls: metadata.hlsManifestUrl,
-		author_id: author.id
-	}).substring(0, 900));
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
