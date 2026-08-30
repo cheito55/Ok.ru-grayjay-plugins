@@ -10,7 +10,7 @@
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
-const REGEX_VIDEO_URL = /ok.ru/(?:video|videoembed)/(\d+)/i;
+const REGEX_VIDEO_URL = /ok.ru/(video|videoembed)/(\d+)/i;
 
 let PLUGIN_ID = "";
 
@@ -433,7 +433,7 @@ return new PlatformVideo({
 // ------------------------------------------------------------
 function extractTitleFromBlock(block) {
 let m = block.match(
-/(?:title|aria-label)=(?:["'])(.*?)(?:["'])/i
+/(title|aria-label)=(["'])(.*?)(["'])/i
 );
 
 ```
@@ -447,7 +447,7 @@ if (m && m[1]) {
 
 const patterns = [
     /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i,
-    /class=["'][^"']*(?:video-card|video-card_title|video_name|title)[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
+    /class=["'][^"']*(video-card|video-card_title|video_name|title)[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
 ];
 
 for (let i = 0; i < patterns.length; i++) {
@@ -472,7 +472,7 @@ return "Video de OK.ru";
 // ------------------------------------------------------------
 function extractThumbnailFromBlock(block) {
 let m = block.match(
-/(?:src|data-src|data-original)=(?:["'])(https?://[^"']+.(?:jpg|jpeg|png|webp)[^"']*)(?:["'])/i
+/(src|data-src|data-original)=(["'])(https?://[^"']+.(jpg|jpeg|png|webp)[^"']*)(["'])/i
 );
 
 ```
@@ -481,7 +481,7 @@ if (m && m[1]) {
 }
 
 m = block.match(
-    /(?:src|data-src|data-original)=(?:["'])(https?:\/\/(?:[^"']*mycdn\.me|[^"']*okcdn\.ru)[^"']*)(?:["'])/i
+    /(src|data-src|data-original)=(["'])(https?:\/\/([^"']*mycdn\.me|[^"']*okcdn\.ru)[^"']*)(["'])/i
 );
 
 if (m && m[1]) {
@@ -523,7 +523,7 @@ return a * 60 + b;
 // ------------------------------------------------------------
 function extractViewsFromBlock(block) {
 const m = block.match(
-/([\d.,\s]+)\s*(?:views|просмотр|visualizaciones|vistas)/i
+/([\d.,\s]+)\s*(views|просмотр|visualizaciones|vistas)/i
 );
 
 ```
@@ -553,7 +553,7 @@ name: "OK.ru"
 
 ```
 const profile = block.match(
-    /href=(?:["'])https?:\/\/(?:www\.)?ok\.ru\/profile\/(\d+)[^"']*(?:["'])[^>]*>([\s\S]*?)<\/a>/i
+    /href=(["'])https?:\/\/(www\.)?ok\.ru\/profile\/(\d+)[^"']*(["'])[^>]*>([\s\S]*?)<\/a>/i
 );
 
 if (profile) {
