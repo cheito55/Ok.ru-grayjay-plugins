@@ -1,50 +1,123 @@
 // ============================================================
 // Plugin de GrayJay para OK.ru (Odnoklassniki)
-// ============================================================
-// Basado en la lógica de extracción usada por streamlink y yt-dlp:
-// - La página del video trae un atributo data-options="{...}" con
-//   flashvars.metadata (o flashvars.metadataUrl para pedirlo aparte).
-// - Dentro de metadata está movie (título, poster, duración) y
-//   hlsManifestUrl / hlsMasterPlaylistUrl con el link HLS firmado.
-// - La búsqueda usa el endpoint interno st.cmd=searchResult, que
-//   devuelve un HTML con bloques JSON "movie":{"info":{...}} doble-
-//   escapados como entidades HTML (&amp;quot; en vez de "), y no
-//   requiere sesión iniciada.
-//
-// IMPORTANTE - revisar antes de usar:
-// - Los nombres exactos de clases (HLSSource, VideoUrlSource,
-//   PlatformVideoDetails, PlatformVideo, PlatformID, PlatformAuthorLink,
-//   Thumbnails, VideoSourceDescriptor, VideoPager) son los que usan los
-//   plugins oficiales de GrayJay (ej. Odysee). Si alguna vuelve a tirar
-//   ReferenceError, es la próxima sospechosa.
-// - "PLATFORM" ya no se asume como global: se guarda el id real del
-//   plugin en PLUGIN_ID durante source.enable(conf, ...).
+// VERSIÓN 100% LOCAL (Sin Vercel) - Reproducción y Búsqueda
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
-const SEARCH_URL_BASE = "https://ok.ru/dk?st.cmd=searchResult&st.mode=Movie&st.grmode=Groups&st.query=";
 
-// Guardamos acá el id real del plugin, que llega como parámetro en
-// enable() -- NO existe un global "config" inyectado por GrayJay.
 let PLUGIN_ID = "";
 
 // ------------------------------------------------------------
-// Habilitación del plugin (obligatorio en la mayoría de plugins)
+// Habilitación del plugin
 // ------------------------------------------------------------
 source.enable = function (conf, settings, savedState) {
     PLUGIN_ID = (conf && conf.id) ? conf.id : "";
 };
 
 // ------------------------------------------------------------
-// Detección de URLs que este plugin puede manejar
+// Detección de URLs
 // ------------------------------------------------------------
 source.isContentDetailsUrl = function (url) {
     return REGEX_VIDEO_URL.test(url);
 };
 
 // ------------------------------------------------------------
-// Obtención del detalle/reproducción del video
+// Búsqueda de videos (Usando la API web interna de OK.ru)
+// ------------------------------------------------------------
+source.search = function (query, type, order, filters) {
+    if (!query) {
+        return new VideoPager([], false, {});
+    }
+
+    try {
+        // 1. Intentamos obtener una cookie de sesión anónima rápida
+        let cookieHeader = "";
+        try {
+            const homeResp = http.GET("https://ok.ru/video", {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            }, false);
+            if (homeResp.headers && homeResp.headers["set-cookie"]) {
+                cookieHeader = homeResp.headers["set-cookie"];
+            } else if (homeResp.headers && homeResp.headers["Set-Cookie"]) {
+                cookieHeader = homeResp.headers["Set-Cookie"];
+            }
+        } catch (e) {}
+
+        // 2. Usamos el endpoint JSON en lugar del HTML para evadir el muro de login
+        const searchUrl = "https://ok.ru/web-api/search/video?st.query=" + encodeURIComponent(query) + "&st.mode=SEARCH&page=1";
+        
+        const searchHeaders = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://ok.ru/video",
+            "X-Requested-With": "XMLHttpRequest" // Clave para evadir el bloqueo
+        };
+        
+        if (cookieHeader) {
+            searchHeaders["Cookie"] = cookieHeader;
+        }
+
+        const resp = http.GET(searchUrl, searchHeaders, false);
+
+        if (!resp.isOk) {
+            return new VideoPager([debugItem("Bloqueo HTTP " + resp.code + " (API web)")], false, {});
+        }
+
+        let data;
+        try {
+            data = JSON.parse(resp.body);
+        } catch (e) {
+            return new VideoPager([debugItem("Error parseando respuesta JSON")], false, {});
+        }
+
+        const items = data.videos || data.items || [];
+        const results = [];
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (!item.id) continue;
+            
+            const thumbUrl = item.thumbnailUrl || item.poster || "";
+            
+            results.push(new PlatformVideo({
+                id: new PlatformID(PLATFORM_NAME, String(item.id), PLUGIN_ID),
+                name: item.title || "Video sin título",
+                thumbnails: thumbUrl ? new Thumbnails([{ url: thumbUrl, quality: 480 }]) : new Thumbnails([]),
+                author: new PlatformAuthorLink(
+                    new PlatformID(PLATFORM_NAME, String(item.authorId || ""), PLUGIN_ID),
+                    item.authorName || "OK.ru", "", ""
+                ),
+                uploadDate: 0,
+                duration: item.duration || 0,
+                viewCount: item.viewsCount || 0,
+                url: "https://ok.ru/video/" + item.id,
+                isLive: item.type === "LIVE"
+            }));
+        }
+
+        if (results.length === 0) {
+            return new VideoPager([debugItem("Búsqueda exitosa pero sin resultados")], false, {});
+        }
+
+        return new VideoPager(results, false, {});
+    } catch (e) {
+        return new VideoPager([debugItem("Error en script: " + e.message)], false, {});
+    }
+};
+
+function debugItem(message) {
+    return new PlatformVideo({
+        id: new PlatformID(PLATFORM_NAME, "debug", PLUGIN_ID),
+        name: message,
+        thumbnails: new Thumbnails([]),
+        author: new PlatformAuthorLink(new PlatformID(PLATFORM_NAME, "", PLUGIN_ID), "Diagnóstico", "", ""),
+        uploadDate: 0, duration: 0, viewCount: 0, url: "https://ok.ru/video", isLive: false
+    });
+}
+
+// ------------------------------------------------------------
+// Obtención del detalle/reproducción del video (LOCAL)
 // ------------------------------------------------------------
 source.getContentDetails = function (url) {
     const match = url.match(REGEX_VIDEO_URL);
@@ -64,13 +137,11 @@ source.getContentDetails = function (url) {
 
     const html = resp.body;
 
-    // Chequeo de video no disponible / privado / borrado
     const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
     if (stubError) {
         throw new ScriptException("Video no disponible: " + stubError[1]);
     }
 
-    // Extraer data-options="{...}"
     const optionsMatch = html.match(/data-options="([^"]+)"/);
     if (!optionsMatch) {
         throw new ScriptException("No se encontró data-options en la página (¿cambió el sitio?)");
@@ -107,138 +178,6 @@ source.getContentDetails = function (url) {
 };
 
 // ------------------------------------------------------------
-// Búsqueda de videos
-// ------------------------------------------------------------
-// Usa el endpoint interno de búsqueda de OK.ru (st.cmd=searchResult),
-// que no requiere sesión iniciada (a diferencia del buscador visual
-// del sitio, que sí exige login). El HTML de respuesta trae bloques
-// JSON del tipo "movie":{"info":{...}} doble-escapados como entidades
-// HTML; hay que decodificarlos antes de parsear.
-source.search = function (query, type, order, filters) {
-    if (!query) {
-        return new VideoPager([], false, {});
-    }
-
-    try {
-        // Paso previo: pedir la home para conseguir cookies de sesión
-        // anónima. Sin esto, el endpoint de búsqueda parece devolver
-        // siempre una página genérica (de tamaño fijo, sin resultados),
-        // sin importar qué se busque -- señal de que el servidor exige
-        // una sesión mínima antes de aceptar la búsqueda.
-        let cookieHeader = "";
-        try {
-            const homeResp = http.GET("https://ok.ru/video", {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            }, false);
-            if (homeResp.headers && homeResp.headers["set-cookie"]) {
-                cookieHeader = homeResp.headers["set-cookie"];
-            } else if (homeResp.headers && homeResp.headers["Set-Cookie"]) {
-                cookieHeader = homeResp.headers["Set-Cookie"];
-            }
-        } catch (e) {
-            // Si falla este paso, seguimos igual sin cookie (mejor que cortar todo)
-        }
-
-        const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
-
-        const searchHeaders = {
-            "Referer": "https://ok.ru/video",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
-        };
-        if (cookieHeader) {
-            searchHeaders["Cookie"] = cookieHeader;
-        }
-
-        const resp = http.GET(searchUrl, searchHeaders, false);
-
-        if (!resp.isOk) {
-            return new VideoPager([debugItem("HTTP status " + resp.code + " al pedir la búsqueda")], false, {});
-        }
-
-        // El HTML viene con el JSON doble-escapado como entidades HTML
-        const html = resp.body
-            .replace(/&amp;quot;/g, '"')
-            .replace(/&amp;amp;/g, "&");
-
-        const hasMarker = html.indexOf('"movie":{"info"') !== -1;
-        const hasLoginWall = html.indexOf("\u041f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d") !== -1;
-        const titleMatch = html.match(/<title>([^<]*)<\/title>/);
-        const pageTitle = titleMatch ? titleMatch[1] : "(sin <title>)";
-
-        const results = [];
-        // Cada resultado trae un bloque "movie":{"info":{...}} con
-        // href, id, provider, title, description, thumbnail y demás.
-        const regex = /"movie":\{"info":\{"href":"([^"]+)","id":"(\d+)","provider":"[^"]*","title":"((?:[^"\\]|\\.)*)","description":"(?:[^"\\]|\\.)*","thumbnail":\{"small":"((?:[^"\\]|\\.)*)"[^}]*\},[^}]*"duration":(\d+)[^}]*"totalViews":(\d+)/g;
-
-        let match;
-        while ((match = regex.exec(html)) !== null) {
-            const videoId = match[2];
-            const title = safeJsonUnescape(match[3]);
-            const thumbUrl = safeJsonUnescape(match[4]).replace(/\\u0026/g, "&");
-            const durationMs = parseInt(match[5], 10) || 0;
-            const viewCount = parseInt(match[6], 10) || 0;
-
-            results.push(new PlatformVideo({
-                id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
-                name: title,
-                thumbnails: new Thumbnails([{ url: thumbUrl, quality: 480 }]),
-                author: new PlatformAuthorLink(
-                    new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
-                    "OK.ru",
-                    "",
-                    ""
-                ),
-                uploadDate: 0,
-                duration: Math.round(durationMs / 1000),
-                viewCount: viewCount,
-                url: "https://ok.ru/video/" + videoId,
-                isLive: false
-            }));
-        }
-
-        if (results.length === 0) {
-            // No matcheó ningún resultado. La pantalla de búsqueda corta los
-            // títulos largos, así que separamos el diagnóstico en varios
-            // ítems cortos en vez de uno solo (que se veía truncado).
-            const shortTitle = (pageTitle || "").substring(0, 40);
-            return new VideoPager([
-                debugItem("1) cookie=" + (cookieHeader ? "SI" : "NO") + " wall=" + hasLoginWall),
-                debugItem("2) title=" + shortTitle),
-                debugItem("3) len=" + html.length + " marker=" + hasMarker)
-            ], false, {});
-        }
-
-        return new VideoPager(results, false, {});
-    } catch (e) {
-        // Cualquier error inesperado también se muestra como resultado,
-        // en vez de perderse silenciosamente.
-        return new VideoPager([debugItem("DEBUG ERROR: " + e)], false, {});
-    }
-};
-
-// Ítem "falso" usado solo para mostrar información de diagnóstico como
-// si fuera un resultado de búsqueda (ver notas arriba). Sacar una vez
-// que la búsqueda funcione de forma confiable.
-function debugItem(message) {
-    return new PlatformVideo({
-        id: new PlatformID(PLATFORM_NAME, "debug", PLUGIN_ID),
-        name: message,
-        thumbnails: new Thumbnails([]),
-        author: new PlatformAuthorLink(
-            new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
-            "OK.ru", "", ""
-        ),
-        uploadDate: 0,
-        duration: 0,
-        viewCount: 0,
-        url: "https://ok.ru/video",
-        isLive: false
-    });
-}
-
-// ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
 function buildVideoDetails(videoId, pageUrl, metadata) {
@@ -246,7 +185,6 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const author = metadata.author || {};
 
     const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
-
     const sources = [];
 
     if (hlsUrl) {
@@ -257,7 +195,6 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         }));
     }
 
-    // Fallback a mp4 directos si no hay HLS (algunos videos viejos)
     if (Array.isArray(metadata.videos)) {
         for (const v of metadata.videos) {
             if (v && v.url) {
@@ -287,9 +224,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         isLive: false,
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM_NAME, String(author.id || ""), PLUGIN_ID),
-            author.name || "OK.ru",
-            "",
-            ""
+            author.name || "OK.ru", "", ""
         ),
         video: new VideoSourceDescriptor(sources)
     });
@@ -309,25 +244,6 @@ function unescapeHtml(str) {
         .replace(/&gt;/g, ">");
 }
 
-// Los títulos/urls extraídos por regex vienen como fragmentos de un
-// string JSON (con \/ , \uXXXX, etc). Envolverlos entre comillas y
-// pasarlos por JSON.parse es la forma más segura de desescaparlos.
-function safeJsonUnescape(fragment) {
-    try {
-        return JSON.parse('"' + fragment + '"');
-    } catch (e) {
-        return fragment;
-    }
-}
-
-// ------------------------------------------------------------
-// Stubs requeridos por la interfaz de plugin
-// ------------------------------------------------------------
-// OJO: antes esto tiraba throw, y como GrayJay llama a getHome solo
-// para armar el feed principal, terminaba mostrando el error repetido
-// en la pantalla de inicio. Ahora devuelve una lista vacía en vez de
-// romper: si la clase VideoPager no coincide con la real de GrayJay,
-// este es el próximo lugar a revisar.
 source.getHome = function () {
     return new VideoPager([], false, {});
 };
