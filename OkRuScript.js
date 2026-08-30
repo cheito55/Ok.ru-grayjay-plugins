@@ -229,14 +229,16 @@ function buildVideoSources(metadata) {
 // contexto alrededor de la primera que encuentre; si no encuentra ninguna,
 // devuelve el arranque del HTML (puede ser útil para detectar un muro de login).
 function buildDiagnosticSnippet(html) {
-	const needles = ["flashvars", "data-options", "hlsManifest", "videoName", "movieSourcesUrl"];
-	for (const needle of needles) {
-		const idx = html.indexOf(needle);
-		if (idx !== -1) {
-			const start = Math.max(0, idx - 100);
-			const end = Math.min(html.length, idx + 500);
-			return `(len=${html.length}) encontrado "${needle}" en pos ${idx}: ...${html.substring(start, end)}...`;
-		}
+	const idx = html.indexOf("flashvars");
+	if (idx === -1) {
+		return `(len=${html.length}) ni siquiera "flashvars" aparece. Inicio del HTML: ...${html.substring(0, 600)}...`;
+	}
+	// Retrocedemos bastante para encontrar el inicio del tag/atributo que
+	// envuelve este JSON (el "<div ... algunAtributo=" del que cuelga).
+	const start = Math.max(0, idx - 700);
+	const end = Math.min(html.length, idx + 60);
+	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
+}
 	}
 	return `(len=${html.length}) ninguna pista conocida encontrada. Inicio del HTML: ...${html.substring(0, 600)}...`;
 }
