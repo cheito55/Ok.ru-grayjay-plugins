@@ -110,7 +110,7 @@ source.getContentDetails = function (url) {
 
 	const metadata = parseOkRuMetadata(resp.body);
 	if (!metadata) {
-		throw new ScriptException("No se encontró el bloque de metadata del reproductor en la página de OK.ru. Es probable que ok.ru haya cambiado el HTML; revisar REGEX_DATA_OPTIONS.");
+		throw new ScriptException("DIAGNOSTICO: " + buildDiagnosticSnippet(resp.body));
 	}
 
 	const movie = metadata.movie || {};
@@ -221,6 +221,24 @@ function buildVideoSources(metadata) {
 	}
 
 	return sources;
+}
+
+// Arma un fragmento del HTML real (recibido en el dispositivo, no bloqueado)
+// para poder ajustar el parsing a ciegas desde afuera. Busca pistas conocidas
+// ("flashvars", "data-options", "videoName", "hlsManifest") y devuelve el
+// contexto alrededor de la primera que encuentre; si no encuentra ninguna,
+// devuelve el arranque del HTML (puede ser útil para detectar un muro de login).
+function buildDiagnosticSnippet(html) {
+	const needles = ["flashvars", "data-options", "hlsManifest", "videoName", "movieSourcesUrl"];
+	for (const needle of needles) {
+		const idx = html.indexOf(needle);
+		if (idx !== -1) {
+			const start = Math.max(0, idx - 100);
+			const end = Math.min(html.length, idx + 500);
+			return `(len=${html.length}) encontrado "${needle}" en pos ${idx}: ...${html.substring(start, end)}...`;
+		}
+	}
+	return `(len=${html.length}) ninguna pista conocida encontrada. Inicio del HTML: ...${html.substring(0, 600)}...`;
 }
 
 function qualityNameToDims(name) {
