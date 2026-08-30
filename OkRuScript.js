@@ -239,9 +239,6 @@ function buildDiagnosticSnippet(html) {
 	const end = Math.min(html.length, idx + 60);
 	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
 }
-	}
-	return `(len=${html.length}) ninguna pista conocida encontrada. Inicio del HTML: ...${html.substring(0, 600)}...`;
-}
 
 function qualityNameToDims(name) {
 	switch (name) {
