@@ -41,96 +41,76 @@ source.search = function (query, type, order, filters) {
 		`${BASE_URL}/video/search?st.query=${encodeURIComponent(query)}`;
 
 	const resp = http.GET(url, {
-		"Accept": "text/html",
-		"User-Agent":
-			"Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
+		"Accept": "text/html"
 	}, false);
 
 	const items = [];
 
 	if (!resp || !resp.isOk || !resp.body) {
-		log("[OK.ru] search: HTTP error");
+		log("[OK.ru] error en búsqueda");
 		return new OkRuVideoPager([], false);
 	}
 
 	try {
 		const html = resp.body;
 
-		/*
-		 * Búsqueda básica de links de videos.
-		 *
-		 * OK.ru puede cambiar el HTML de resultados,
-		 * por eso usamos varios patrones.
-		 */
-		const patterns = [
-			/href=["']([^"']*\/video\/\d+[^"']*)["']/gi,
-			/href=["']([^"']*\/videoembed\/\d+[^"']*)["']/gi,
-			/href=["']([^"']*\/movie\/\d+[^"']*)["']/gi
-		];
+		const regex =
+			/href=["']([^"']*\/video\/(\d+)[^"']*)["']/gi;
 
+		let match;
 		const seen = {};
 
-		patterns.forEach(pattern => {
-			let match;
+		while ((match = regex.exec(html)) !== null) {
+			const videoId = match[2];
 
-			while ((match = pattern.exec(html)) !== null) {
-				let videoUrl = match[1];
+			if (seen[videoId]) {
+				continue;
+			}
 
-				videoUrl = htmlDecode(videoUrl);
+			seen[videoId] = true;
 
-				if (videoUrl.indexOf("http") !== 0) {
-					videoUrl = BASE_URL + videoUrl;
-				}
+			let videoUrl = match[1];
 
-				const idMatch = REGEX_VIDEO_URL.exec(videoUrl);
+			if (videoUrl.indexOf("http") !== 0) {
+				videoUrl = BASE_URL + videoUrl;
+			}
 
-				if (!idMatch) continue;
+			items.push(
+				new PlatformVideo({
+					id: new PlatformID(
+						PLATFORM,
+						videoId,
+						plugin.config.id
+					),
 
-				const videoId = idMatch[1];
+					name: "Video de OK.ru (" + videoId + ")",
 
-				if (seen[videoId]) continue;
+					thumbnails: new Thumbnails([]),
 
-				seen[videoId] = true;
-
-				items.push(
-					new PlatformVideo({
-						id: new PlatformID(
+					author: new PlatformAuthorLink(
+						new PlatformID(
 							PLATFORM,
-							videoId,
+							"unknown",
 							plugin.config.id
 						),
+						"OK.ru",
+						BASE_URL,
+						""
+					),
 
-						name: "Video de OK.ru " + videoId,
+					datetime: 0,
+					duration: 0,
+					viewCount: 0,
 
-						thumbnails: new Thumbnails([]),
+					url: videoUrl,
 
-						author: new PlatformAuthorLink(
-							new PlatformID(
-								PLATFORM,
-								"unknown",
-								plugin.config.id
-							),
-							"OK.ru",
-							BASE_URL,
-							""
-						),
-
-						datetime: 0,
-						duration: 0,
-						viewCount: 0,
-
-						url: videoUrl,
-
-						isLive: false
-					})
-				);
-			}
-		});
-
-		log("[OK.ru] search: encontrados " + items.length + " videos");
+					isLive: false
+				})
+			);
+		}
 
 	} catch (e) {
-		log("[OK.ru] search parse error: " + e);
+		log("[OK.ru] error parseando búsqueda: " + e);
 	}
 
 	return new OkRuVideoPager(items, false);
@@ -138,7 +118,7 @@ source.search = function (query, type, order, filters) {
 
 
 /* ============================================================
- * URL DETECTION
+ * URL
  * ============================================================ */
 
 source.isContentDetailsUrl = function (url) {
@@ -147,7 +127,7 @@ source.isContentDetailsUrl = function (url) {
 
 
 /* ============================================================
- * CONTENT DETAILS
+ * VIDEO DETAILS
  * ============================================================ */
 
 source.getContentDetails = function (url) {
@@ -161,29 +141,20 @@ source.getContentDetails = function (url) {
 
 	const videoId = match[1];
 
-	log("[OK.ru] getContentDetails: " + videoId);
+	log("[OK.ru] obteniendo video " + videoId);
 
 	/*
 	 * IMPORTANTE:
 	 *
-	 * Ya no construimos:
+	 * Ya no usamos:
 	 *
-	 * https://vd.mycdn.me/?video_id=...
+	 * https://vd.mycdn.me/?video_id=ID
 	 *
-	 * porque esa NO es necesariamente la URL reproducible.
-	 *
-	 * Primero descargamos la página real de OK.ru.
+	 * porque esa no es necesariamente una URL de reproducción.
 	 */
 
 	const resp = http.GET(url, {
-		"Accept":
-			"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-
-		"User-Agent":
-			"Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 " +
-			"(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-
-		"Referer": BASE_URL + "/"
+		"Accept": "text/html"
 	}, false);
 
 	if (!resp || !resp.isOk || !resp.body) {
@@ -194,78 +165,61 @@ source.getContentDetails = function (url) {
 
 	const html = resp.body;
 
-	log("[OK.ru] HTML recibido: " + html.length + " bytes");
-
-	let metadataResult = extractMetadataFromHtml(html);
-
-	let metadata = metadataResult
-		? metadataResult.metadata
-		: null;
+	log(
+		"[OK.ru] página recibida: " +
+		html.length +
+		" caracteres"
+	);
 
 	/*
-	 * ------------------------------------------------------------
-	 * FALLBACK: metadataUrl
-	 * ------------------------------------------------------------
+	 * Primero intentamos obtener metadata directamente.
 	 */
 
-	if (!metadata &&
-		metadataResult &&
-		metadataResult.metadataUrl) {
-
-		const metadataUrl = metadataResult.metadataUrl;
-
-		log(
-			"[OK.ru] usando metadataUrl: " +
-			metadataUrl
-		);
-
-		metadata = requestMetadata(
-			metadataUrl,
-			url
-		);
-	}
+	let metadata = parseMetadataFromHtml(html);
 
 	/*
-	 * Si no pudimos obtener metadata, devolvemos un objeto
-	 * de detalles sin streams para que el error sea claro.
+	 * Si no hay metadata directa, buscamos metadataUrl.
 	 */
 
 	if (!metadata) {
-		log("[OK.ru] ERROR: no se encontró metadata");
+		const metadataUrl =
+			parseMetadataUrlFromHtml(html);
 
+		if (metadataUrl) {
+			log(
+				"[OK.ru] metadataUrl encontrada"
+			);
+
+			metadata =
+				getMetadataFromUrl(
+					metadataUrl
+				);
+		}
+	}
+
+	if (!metadata) {
 		throw new ScriptException(
-			"[OK.ru] No se pudo extraer la metadata del video " +
-			videoId
+			"[OK.ru] No se encontró metadata de reproducción"
 		);
 	}
 
 	log("[OK.ru] metadata encontrada");
 
-	const sources = buildVideoSources(
-		metadata,
-		url
-	);
+	const sources =
+		buildVideoSources(metadata);
 
-	if (sources.length === 0) {
+	if (!sources || sources.length === 0) {
 		throw new ScriptException(
-			"[OK.ru] La metadata no contiene ningún stream reproducible"
+			"[OK.ru] La metadata no contiene MP4 ni HLS reproducible"
 		);
 	}
 
 	const title =
-		extractTitle(metadata) ||
+		getMetadataTitle(metadata) ||
 		"Video de OK.ru (" + videoId + ")";
 
-	const thumbnail =
-		extractThumbnail(metadata);
-
 	const duration =
-		extractDuration(metadata);
-
-	log(
-		"[OK.ru] streams encontrados: " +
-		sources.length
-	);
+		getMetadataDuration(metadata);
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(
@@ -276,23 +230,16 @@ source.getContentDetails = function (url) {
 
 		name: title,
 
-		thumbnails: thumbnail
-			? new Thumbnails([
-				new Thumbnail(thumbnail, 0, 0)
-			])
-			: new Thumbnails([]),
+		thumbnails: new Thumbnails([]),
 
 		author: new PlatformAuthorLink(
 			new PlatformID(
 				PLATFORM,
-				extractAuthorId(metadata) || "unknown",
+				"unknown",
 				plugin.config.id
 			),
-
-			extractAuthorName(metadata) || "OK.ru",
-
+			"OK.ru",
 			BASE_URL,
-
 			""
 		),
 
@@ -300,131 +247,151 @@ source.getContentDetails = function (url) {
 
 		duration: duration,
 
-		viewCount:
-			Number(metadata.viewCount || 0),
+		viewCount: 0,
 
 		url: url,
 
 		shareUrl: url,
 
-		isLive:
-			!!metadata.liveDashManifestUrl ||
-			!!metadata.isLive,
+		isLive: false,
 
-		video:
-			new VideoSourceDescriptor(sources)
+		video: new VideoSourceDescriptor(sources)
 	});
 };
 
 
 /* ============================================================
- * METADATA EXTRACTION
+ * DIRECT METADATA
  * ============================================================ */
 
-function extractMetadataFromHtml(html) {
-	if (!html) return null;
-
-	/*
-	 * Buscamos data-options tanto con comillas dobles
-	 * como con comillas simples.
-	 */
+function parseMetadataFromHtml(html) {
+	if (!html) {
+		return null;
+	}
 
 	const patterns = [
-		/data-options\s*=\s*"([^"]+)"/i,
-		/data-options\s*=\s*'([^']+)'/i
+		/data-options="([^"]+)"/i,
+		/data-options='([^']+)'/i
 	];
 
-	let optionsText = null;
+	let match = null;
 
 	for (let i = 0; i < patterns.length; i++) {
-		const match = patterns[i].exec(html);
+		match = patterns[i].exec(html);
 
 		if (match) {
-			optionsText = match[1];
 			break;
 		}
 	}
 
-	if (!optionsText) {
+	if (!match) {
 		log("[OK.ru] data-options no encontrado");
 		return null;
 	}
 
 	try {
-		optionsText = htmlDecode(optionsText);
+		const decoded =
+			htmlDecode(match[1]);
 
-		const options = JSON.parse(optionsText);
-
-		const flashvars =
-			options.flashvars || {};
-
-		let metadata = null;
-		let metadataUrl = null;
+		const options =
+			JSON.parse(decoded);
 
 		/*
-		 * Caso 1:
+		 * metadata puede estar en:
 		 *
 		 * flashvars.metadata
-		 */
-
-		if (flashvars.metadata) {
-			metadata =
-				parseMetadataString(
-					flashvars.metadata
-				);
-
-			if (metadata) {
-				log(
-					"[OK.ru] metadata encontrada directamente"
-				);
-
-				return {
-					metadata: metadata,
-					metadataUrl: null
-				};
-			}
-		}
-
-		/*
-		 * Caso 2:
 		 *
-		 * flashvars.metadataUrl
+		 * o directamente:
+		 *
+		 * metadata
 		 */
 
-		if (flashvars.metadataUrl) {
-			metadataUrl =
-				safeDecodeURIComponent(
-					flashvars.metadataUrl
-				);
+		let metadata =
+			options.flashvars &&
+			options.flashvars.metadata
+				? options.flashvars.metadata
+				: options.metadata;
 
-			return {
-				metadata: null,
-				metadataUrl: metadataUrl
-			};
+		if (!metadata) {
+			return null;
 		}
 
 		/*
-		 * Algunos formatos pueden colocar metadata
-		 * directamente en options.
+		 * Puede venir URL encoded.
 		 */
 
-		if (options.metadata) {
-			metadata =
-				parseMetadataString(
-					options.metadata
-				);
+		metadata =
+			safeDecodeURIComponent(metadata);
 
-			if (metadata) {
-				return {
-					metadata: metadata,
-					metadataUrl: null
-				};
-			}
+		metadata =
+			htmlDecode(metadata);
+
+		return JSON.parse(metadata);
+
+	} catch (e) {
+		log(
+			"[OK.ru] error leyendo metadata: " +
+			e
+		);
+
+		return null;
+	}
+}
+
+
+/* ============================================================
+ * METADATA URL
+ * ============================================================ */
+
+function parseMetadataUrlFromHtml(html) {
+	if (!html) {
+		return null;
+	}
+
+	const patterns = [
+		/data-options="([^"]+)"/i,
+		/data-options='([^']+)'/i
+	];
+
+	let match = null;
+
+	for (let i = 0; i < patterns.length; i++) {
+		match = patterns[i].exec(html);
+
+		if (match) {
+			break;
+		}
+	}
+
+	if (!match) {
+		return null;
+	}
+
+	try {
+		const decoded =
+			htmlDecode(match[1]);
+
+		const options =
+			JSON.parse(decoded);
+
+		if (
+			options.flashvars &&
+			options.flashvars.metadataUrl
+		) {
+			return safeDecodeURIComponent(
+				options.flashvars.metadataUrl
+			);
+		}
+
+		if (options.metadataUrl) {
+			return safeDecodeURIComponent(
+				options.metadataUrl
+			);
 		}
 
 	} catch (e) {
 		log(
-			"[OK.ru] error leyendo data-options: " +
+			"[OK.ru] error buscando metadataUrl: " +
 			e
 		);
 	}
@@ -434,78 +401,38 @@ function extractMetadataFromHtml(html) {
 
 
 /* ============================================================
- * REQUEST METADATA URL
+ * GET METADATA URL
  * ============================================================ */
 
-function requestMetadata(metadataUrl, referer) {
-	if (!metadataUrl) return null;
+function getMetadataFromUrl(metadataUrl) {
+	if (!metadataUrl) {
+		return null;
+	}
 
 	try {
-		/*
-		 * OK.ru utiliza metadataUrl para entregar el JSON
-		 * de reproducción. Intentamos POST primero.
-		 */
-
-		let resp = null;
-
-		try {
-			resp = http.POST(
-				metadataUrl,
-				{
-					"Accept": "application/json,text/plain,*/*",
-					"Referer": referer,
-					"User-Agent":
-						"Mozilla/5.0 (Linux; Android 12) " +
-						"AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
-				},
-				"",
-				false
-			);
-		} catch (e) {
-			log(
-				"[OK.ru] POST metadata falló: " +
-				e
-			);
-		}
-
-		/*
-		 * Fallback GET.
-		 */
+		const resp = http.GET(metadataUrl, {
+			"Accept": "application/json,text/plain,*/*"
+		}, false);
 
 		if (!resp || !resp.isOk || !resp.body) {
 			log(
-				"[OK.ru] intentando GET metadataUrl"
-			);
-
-			resp = http.GET(
-				metadataUrl,
-				{
-					"Accept":
-						"application/json,text/plain,*/*",
-
-					"Referer": referer,
-
-					"User-Agent":
-						"Mozilla/5.0 (Linux; Android 12) " +
-						"AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36"
-				},
-				false
-			);
-		}
-
-		if (!resp || !resp.isOk || !resp.body) {
-			log(
-				"[OK.ru] metadataUrl no respondió correctamente"
+				"[OK.ru] metadataUrl devolvió error"
 			);
 
 			return null;
 		}
 
-		return parseMetadataString(resp.body);
+		let body =
+			safeDecodeURIComponent(resp.body);
+
+		body =
+			htmlDecode(body);
+
+		return JSON.parse(body);
 
 	} catch (e) {
 		log(
-			"[OK.ru] requestMetadata error: " +
+			"[OK.ru] error obteniendo metadataUrl: " +
 			e
 		);
 
@@ -515,56 +442,10 @@ function requestMetadata(metadataUrl, referer) {
 
 
 /* ============================================================
- * PARSE METADATA JSON
+ * VIDEO SOURCES
  * ============================================================ */
 
-function parseMetadataString(value) {
-	if (!value) return null;
-
-	try {
-		/*
-		 * A veces metadata viene URL-encoded.
-		 */
-
-		let text = value;
-
-		text = safeDecodeURIComponent(text);
-
-		text = htmlDecode(text);
-
-		/*
-		 * Puede venir como JSON directamente.
-		 */
-
-		const parsed = JSON.parse(text);
-
-		return parsed;
-
-	} catch (e) {
-		/*
-		 * Segundo intento sin decodeURIComponent.
-		 */
-
-		try {
-			return JSON.parse(
-				htmlDecode(value)
-			);
-		} catch (e2) {
-			log(
-				"[OK.ru] metadata JSON inválido"
-			);
-
-			return null;
-		}
-	}
-}
-
-
-/* ============================================================
- * BUILD VIDEO SOURCES
- * ============================================================ */
-
-function buildVideoSources(metadata, referer) {
+function buildVideoSources(metadata) {
 	const sources = [];
 
 	if (!metadata) {
@@ -572,11 +453,11 @@ function buildVideoSources(metadata, referer) {
 	}
 
 	const duration =
-		extractDuration(metadata);
+		getMetadataDuration(metadata);
 
 	/*
 	 * ------------------------------------------------------------
-	 * MP4 PROGRESIVO
+	 * MP4
 	 * ------------------------------------------------------------
 	 */
 
@@ -584,37 +465,20 @@ function buildVideoSources(metadata, referer) {
 		metadata.videos &&
 		Array.isArray(metadata.videos)
 	) {
-		metadata.videos.forEach(function (video) {
+		metadata.videos.forEach(function (v) {
 
-			if (!video || !video.url) {
+			if (!v || !v.url) {
 				return;
 			}
 
-			const url =
-				video.url;
-
-			const quality =
-				video.name ||
-				video.quality ||
-				"mp4";
-
 			const dims =
-				qualityNameToDims(
-					quality
-				);
-
-			log(
-				"[OK.ru] MP4: " +
-				quality +
-				" -> " +
-				url
-			);
+				qualityNameToDims(v.name);
 
 			sources.push(
 				new VideoUrlSource({
-					name: quality,
+					name: v.name || "mp4",
 
-					url: url,
+					url: v.url,
 
 					width: dims.width,
 
@@ -624,132 +488,116 @@ function buildVideoSources(metadata, referer) {
 
 					codec: "h264",
 
-					bitrate:
-						Number(
-							video.bitrate || 0
-						),
+					bitrate: Number(v.bitrate || 0),
 
 					duration: duration
 				})
 			);
+
+			log(
+				"[OK.ru] MP4 encontrado: " +
+				(v.name || "mp4")
+			);
 		});
 	}
-
 
 	/*
 	 * ------------------------------------------------------------
 	 * HLS
 	 * ------------------------------------------------------------
-	 *
-	 * OK.ru puede proporcionar:
-	 *
-	 * hlsMasterPlaylistUrl
-	 * hlsManifestUrl
 	 */
 
-	const hlsUrls = [];
+	let hlsUrl = null;
 
 	if (metadata.hlsMasterPlaylistUrl) {
-		hlsUrls.push(
-			metadata.hlsMasterPlaylistUrl
-		);
-	}
-
-	if (metadata.hlsManifestUrl) {
-		hlsUrls.push(
-			metadata.hlsManifestUrl
-		);
-	}
-
-	const seenHls = {};
-
-	hlsUrls.forEach(function (hlsUrl) {
-
-		if (!hlsUrl) return;
-
 		hlsUrl =
-			safeDecodeURIComponent(
-				hlsUrl
-			);
-
-		if (seenHls[hlsUrl]) {
-			return;
-		}
-
-		seenHls[hlsUrl] = true;
-
-		log(
-			"[OK.ru] HLS: " +
-			hlsUrl
-		);
-
-		try {
-			sources.push(
-				new HLSSource({
-					name: "HLS",
-
-					url: hlsUrl,
-
-					duration: duration,
-
-					priority: true
-				})
-			);
-		} catch (e) {
-			log(
-				"[OK.ru] no se pudo crear HLSSource: " +
-				e
-			);
-		}
-	});
-
-
-	/*
-	 * ------------------------------------------------------------
-	 * LIVE DASH
-	 * ------------------------------------------------------------
-	 */
-
-	if (metadata.liveDashManifestUrl) {
-
-		log(
-			"[OK.ru] DASH detectado: " +
-			metadata.liveDashManifestUrl
-		);
-
-		/*
-		 * No agregamos DASH automáticamente porque
-		 * la API disponible en tu plugin no garantiza
-		 * un tipo DASH compatible.
-		 *
-		 * HLS/MP4 siguen siendo las opciones principales.
-		 */
+			metadata.hlsMasterPlaylistUrl;
 	}
 
+	if (!hlsUrl && metadata.hlsManifestUrl) {
+		hlsUrl =
+			metadata.hlsManifestUrl;
+	}
 
-	return removeDuplicateSources(
-		sources
-	);
+	if (hlsUrl) {
+		hlsUrl =
+			safeDecodeURIComponent(hlsUrl);
+
+		log(
+			"[OK.ru] HLS encontrado"
+		);
+
+		sources.push(
+			new HLSSource({
+				name: "HLS",
+
+				url: hlsUrl,
+
+				duration: duration,
+
+				priority: true
+			})
+		);
+	}
+
+	return sources;
 }
 
 
 /* ============================================================
- * QUALITY
+ * HELPERS
  * ============================================================ */
 
-function qualityNameToDims(name) {
-
-	if (!name) {
-		return {
-			width: 0,
-			height: 0
-		};
+function getMetadataTitle(metadata) {
+	if (!metadata) {
+		return "";
 	}
 
-	const normalized =
-		String(name).toLowerCase();
+	if (
+		metadata.movie &&
+		typeof metadata.movie === "object"
+	) {
+		if (metadata.movie.title) {
+			return metadata.movie.title;
+		}
 
-	switch (normalized) {
+		if (metadata.movie.name) {
+			return metadata.movie.name;
+		}
+	}
+
+	return metadata.title || metadata.name || "";
+}
+
+
+function getMetadataDuration(metadata) {
+	if (!metadata) {
+		return 0;
+	}
+
+	if (
+		metadata.movie &&
+		typeof metadata.movie === "object"
+	) {
+		if (metadata.movie.duration) {
+			return Math.round(
+				Number(metadata.movie.duration)
+			);
+		}
+	}
+
+	if (metadata.duration) {
+		return Math.round(
+			Number(metadata.duration)
+		);
+	}
+
+	return 0;
+}
+
+
+function qualityNameToDims(name) {
+	switch (name) {
 
 		case "mobile":
 			return {
@@ -782,320 +630,60 @@ function qualityNameToDims(name) {
 			};
 
 		case "full":
-		case "fullhd":
-		case "1080":
-		case "1080p":
 			return {
 				width: 1920,
 				height: 1080
 			};
 
 		case "quad":
-		case "1440":
-		case "1440p":
 			return {
 				width: 2560,
 				height: 1440
 			};
 
 		default:
-			break;
+			return {
+				width: 0,
+				height: 0
+			};
 	}
-
-	/*
-	 * Si OK.ru devuelve algo como "720p",
-	 * intentamos obtener la resolución.
-	 */
-
-	const match =
-		normalized.match(
-			/^(\d{3,4})p$/
-		);
-
-	if (match) {
-
-		const height =
-			Number(match[1]);
-
-		let width = 0;
-
-		if (height === 2160) {
-			width = 3840;
-		} else if (height === 1440) {
-			width = 2560;
-		} else if (height === 1080) {
-			width = 1920;
-		} else if (height === 720) {
-			width = 1280;
-		} else if (height === 480) {
-			width = 854;
-		} else if (height === 360) {
-			width = 640;
-		}
-
-		return {
-			width: width,
-			height: height
-		};
-	}
-
-	return {
-		width: 0,
-		height: 0
-	};
 }
 
-
-/* ============================================================
- * METADATA HELPERS
- * ============================================================ */
-
-function extractTitle(metadata) {
-
-	if (!metadata) return "";
-
-	if (metadata.movie) {
-
-		if (typeof metadata.movie === "object") {
-
-			if (metadata.movie.title) {
-				return metadata.movie.title;
-			}
-
-			if (metadata.movie.name) {
-				return metadata.movie.name;
-			}
-		}
-
-		if (typeof metadata.movie === "string") {
-			return metadata.movie;
-		}
-	}
-
-	return (
-		metadata.title ||
-		metadata.name ||
-		""
-	);
-}
-
-
-function extractDuration(metadata) {
-
-	if (!metadata) return 0;
-
-	let duration = 0;
-
-	if (
-		metadata.movie &&
-		typeof metadata.movie === "object"
-	) {
-		duration =
-			metadata.movie.duration || 0;
-	}
-
-	if (!duration) {
-		duration =
-			metadata.duration || 0;
-	}
-
-	return Math.round(
-		Number(duration)
-	);
-}
-
-
-function extractThumbnail(metadata) {
-
-	if (!metadata) return null;
-
-	if (metadata.thumbnail) {
-		return metadata.thumbnail;
-	}
-
-	if (metadata.poster) {
-		return metadata.poster;
-	}
-
-	if (
-		metadata.movie &&
-		typeof metadata.movie === "object"
-	) {
-
-		if (metadata.movie.thumbnail) {
-			return metadata.movie.thumbnail;
-		}
-
-		if (metadata.movie.poster) {
-			return metadata.movie.poster;
-		}
-	}
-
-	if (
-		metadata.thumbnails &&
-		Array.isArray(metadata.thumbnails) &&
-		metadata.thumbnails.length > 0
-	) {
-
-		const first =
-			metadata.thumbnails[0];
-
-		if (typeof first === "string") {
-			return first;
-		}
-
-		if (first.url) {
-			return first.url;
-		}
-	}
-
-	return null;
-}
-
-
-function extractAuthorName(metadata) {
-
-	if (!metadata) return "";
-
-	if (metadata.author) {
-
-		if (typeof metadata.author === "string") {
-			return metadata.author;
-		}
-
-		if (metadata.author.name) {
-			return metadata.author.name;
-		}
-
-		if (metadata.author.title) {
-			return metadata.author.title;
-		}
-	}
-
-	return "";
-}
-
-
-function extractAuthorId(metadata) {
-
-	if (!metadata) return "";
-
-	if (
-		metadata.author &&
-		typeof metadata.author === "object"
-	) {
-
-		return (
-			metadata.author.id ||
-			metadata.author.uid ||
-			""
-		);
-	}
-
-	return "";
-}
-
-
-/* ============================================================
- * DUPLICATE SOURCES
- * ============================================================ */
-
-function removeDuplicateSources(sources) {
-
-	const result = [];
-
-	const seen = {};
-
-	sources.forEach(function (source) {
-
-		if (!source) return;
-
-		const key =
-			source.url || source.name;
-
-		if (!key) {
-			result.push(source);
-			return;
-		}
-
-		if (seen[key]) {
-			return;
-		}
-
-		seen[key] = true;
-
-		result.push(source);
-	});
-
-	return result;
-}
-
-
-/* ============================================================
- * HTML / URL HELPERS
- * ============================================================ */
 
 function htmlDecode(str) {
+	if (!str) {
+		return "";
+	}
 
-	if (!str) return "";
-
-	return String(str)
+	return str
 		.replace(/&quot;/g, "\"")
-		.replace(/&#34;/g, "\"")
 		.replace(/&amp;/g, "&")
 		.replace(/&lt;/g, "<")
 		.replace(/&gt;/g, ">")
-		.replace(/&#39;/g, "'")
-		.replace(/&#x27;/gi, "'")
-		.replace(/&#x2F;/gi, "/");
+		.replace(/&#39;/g, "'");
 }
 
 
 function safeDecodeURIComponent(value) {
-
-	if (!value) return value;
-
-	let result = value;
-
-	/*
-	 * Algunas respuestas pueden estar doblemente
-	 * codificadas.
-	 */
-
-	for (let i = 0; i < 2; i++) {
-
-		try {
-
-			const decoded =
-				decodeURIComponent(result);
-
-			if (decoded === result) {
-				break;
-			}
-
-			result = decoded;
-
-		} catch (e) {
-			break;
-		}
+	if (!value) {
+		return value;
 	}
 
-	return result;
+	try {
+		return decodeURIComponent(value);
+	} catch (e) {
+		return value;
+	}
 }
 
 
 /* ============================================================
- * VIDEO PAGER
+ * PAGER
  * ============================================================ */
 
 class OkRuVideoPager extends VideoPager {
 
-	constructor(
-		results,
-		hasMore,
-		context
-	) {
-
+	constructor(results, hasMore, context) {
 		super(
 			results,
 			hasMore,
@@ -1104,7 +692,6 @@ class OkRuVideoPager extends VideoPager {
 	}
 
 	nextPage() {
-
 		return new OkRuVideoPager(
 			[],
 			false,
