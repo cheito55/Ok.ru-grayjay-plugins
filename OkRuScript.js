@@ -1,10 +1,7 @@
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
-// Reemplaza esta URL con la tuya real de Vercel
-const BRIDGE_API_URL = "https://okru-app.vercel.app/api/okru";
-
-const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live|videoembed|movie)\/(\d+)/i;
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live)\/(\d+)/i;
 const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
@@ -64,76 +61,44 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Consultamos a nuestro servidor en Vercel para obtener los datos limpios y evitar bloqueos
-	const resp = http.GET(`${BRIDGE_API_URL}?id=${videoId}`, {
-		"Accept": "application/json"
+	const resp = http.GET(url, {
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 	}, false);
-
 	if (!resp.isOk) {
-		throw new ScriptException(`Error al conectar con el servidor puente (HTTP ${resp.code})`);
+		throw new ScriptException(`No se pudo cargar la página del video (HTTP ${resp.code})`);
 	}
 
-	let data;
-	try {
-		data = JSON.parse(resp.body);
-	} catch (e) {
-		throw new ScriptException("No se pudo parsear la respuesta del servidor puente.");
+	const metadata = parseOkRuMetadata(resp.body);
+	if (!metadata) {
+		throw new ScriptException("DIAGNOSTICO: " + buildDiagnosticSnippet(resp.body));
 	}
 
-	if (data.error) {
-		throw new ScriptException("Error del servidor: " + data.error);
-	}
+	const movie = metadata.movie || {};
+	const author = metadata.author || {};
 
-	const title = data.title || "Video de OK.ru";
-	const thumbnailUrl = data.poster || "";
-	const duration = Math.round(data.duration || 0);
-	const isLive = data.isLive || false;
+	const title = movie.title || "Video de OK.ru";
+	const thumbnailUrl = movie.poster || "";
+	const duration = Math.round(movie.duration || 0);
+	const isLive = movie.type === "LIVE" || !!metadata.isLive;
 
-	const videoSources = [];
-
-	(data.videos || []).forEach(v => {
-		if (!v.url) return;
-		const dims = qualityNameToDims(v.name);
-		videoSources.push(new VideoUrlSource({
-			name: v.name || "mp4",
-			url: v.url,
-			width: dims.width,
-			height: dims.height,
-			container: "video/mp4",
-			codec: "h264",
-			bitrate: 0,
-			duration: duration
-		}));
-	});
-
-	if (data.hlsManifestUrl) {
-		videoSources.push(new HLSSource({
-			name: "HLS",
-			url: data.hlsManifestUrl,
-			duration: duration,
-			priority: true
-		}));
-	}
-
+	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron fuentes de video reproducibles desde el servidor puente.");
+		throw new ScriptException("No se encontraron URLs de video reproducibles (metadata: " + JSON.stringify(metadata).substring(0, 500) + ")");
 	}
-
-	const thumbsList = thumbnailUrl ? [new Thumbnail(thumbnailUrl, 0)] : [];
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
 		name: title,
-		thumbnails: new Thumbnails(thumbsList),
+		thumbnails: new Thumbnails([new Thumbnail(thumbnailUrl, 0)]),
 		author: new PlatformAuthorLink(
-			new PlatformID(PLATFORM, "unknown", plugin.config.id),
-			"OK.ru",
-			BASE_URL,
-			""
+			new PlatformID(PLATFORM, String(author.id || ""), plugin.config.id),
+			author.name || "OK.ru",
+			author.url || BASE_URL,
+			author.pic || ""
 		),
 		datetime: 0,
 		duration: duration,
-		viewCount: 0,
+		viewCount: movie.viewsCount || movie.totalCount || 0,
 		url: url,
 		shareUrl: url,
 		isLive: isLive,
@@ -230,13 +195,10 @@ function qualityNameToDims(name) {
 
 function mapSearchResultToPlatformVideo(item) {
 	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
-	const thumbUrl = item.thumbnailUrl || item.poster || "";
-	const thumbsList = thumbUrl ? [new Thumbnail(thumbUrl, 0)] : [];
-
 	return new PlatformVideo({
 		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
 		name: item.title || "",
-		thumbnails: new Thumbnails(thumbsList),
+		thumbnails: new Thumbnails([new Thumbnail(item.thumbnailUrl || item.poster || "", 0)]),
 		author: new PlatformAuthorLink(
 			new PlatformID(PLATFORM, String(item.authorId || ""), plugin.config.id),
 			item.authorName || "OK.ru",
