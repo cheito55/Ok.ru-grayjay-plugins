@@ -2,8 +2,7 @@ const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live)\/(\d+)/i;
-const REGEX_DATA_OPTIONS = /id="hook_Block_VideoPlayer"[^>]*data-options="([^"]+)"/i;
-const REGEX_DATA_OPTIONS_FALLBACK = /data-module="OKVideo\.Player"[^>]*data-options="([^"]+)"/i;
+const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
 
@@ -84,7 +83,7 @@ source.getContentDetails = function (url) {
 
 	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron URLs de video reproducibles para este contenido (puede estar geobloqueado o requerir login).");
+		throw new ScriptException("No se encontraron URLs de video reproducibles (metadata: " + JSON.stringify(metadata).substring(0, 500) + ")");
 	}
 
 	return new PlatformVideoDetails({
@@ -108,7 +107,7 @@ source.getContentDetails = function (url) {
 };
 
 function parseOkRuMetadata(html) {
-	let optionsMatch = REGEX_DATA_OPTIONS.exec(html) || REGEX_DATA_OPTIONS_FALLBACK.exec(html);
+	let optionsMatch = REGEX_DATA_OPTIONS.exec(html);
 	if (!optionsMatch) {
 		return null;
 	}
@@ -175,13 +174,7 @@ function buildDiagnosticSnippet(html) {
 	if (idx === -1) {
 		return `(len=${html.length}) ni "flashvars" aparece. Inicio: ...${html.substring(0, 600)}...`;
 	}
-	// Buscamos el último `="` SIN escapar antes de "flashvars": como todo el
-	// JSON interno usa &quot; en vez de comillas reales, el `="` real tiene
-	// que ser el borde del atributo HTML que envuelve todo esto.
 	const attrStart = html.lastIndexOf('="', idx);
-	if (attrStart === -1) {
-		return `(len=${html.length}) no encontré ="` + ` antes de flashvars (pos=${idx})`;
-	}
 	const start = Math.max(0, attrStart - 250);
 	const end = Math.min(html.length, attrStart + 150);
 	return `(len=${html.length}) attr@${attrStart}: ...${html.substring(start, end)}...`;
