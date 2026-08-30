@@ -1,3 +1,15 @@
+// ============================================================================
+// Plugin no oficial de OK.ru para GrayJay
+//
+// IMPORTANTE (leer antes de usar):
+// - Esto es un punto de partida funcional, escrito siguiendo la convención de
+//   plugins de GrayJay (misma familia de clases que usan los plugins de
+//   Dailymotion, Rutube, PeerTube, etc. de la comunidad).
+// - NO pude probarlo en vivo contra ok.ru (mi entorno no tiene acceso a
+//   internet), así que los nombres exactos de algunos campos del JSON interno
+//   de ok.ru pueden haber cambiado. Están marcados con "// VERIFICAR" abajo.
+// ============================================================================
+
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
@@ -83,8 +95,15 @@ source.getContentDetails = function (url) {
 
 	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron URLs de video reproducibles (metadata: " + JSON.stringify(metadata).substring(0, 500) + ")");
+		throw new ScriptException("No se encontraron URLs de video reproducibles para este contenido (puede estar geobloqueado o requerir login).");
 	}
+
+	throw new ScriptException("DEBUG_SOURCES: " + JSON.stringify({
+		duration_raw: movie.duration,
+		videos: metadata.videos,
+		hls: metadata.hlsManifestUrl,
+		author_id: author.id
+	}).substring(0, 900));
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
@@ -172,12 +191,11 @@ function buildVideoSources(metadata) {
 function buildDiagnosticSnippet(html) {
 	const idx = html.indexOf("flashvars");
 	if (idx === -1) {
-		return `(len=${html.length}) ni "flashvars" aparece. Inicio: ...${html.substring(0, 600)}...`;
+		return `(len=${html.length}) ni siquiera "flashvars" aparece. Inicio del HTML: ...${html.substring(0, 600)}...`;
 	}
-	const attrStart = html.lastIndexOf('="', idx);
-	const start = Math.max(0, attrStart - 250);
-	const end = Math.min(html.length, attrStart + 150);
-	return `(len=${html.length}) attr@${attrStart}: ...${html.substring(start, end)}...`;
+	const start = Math.max(0, idx - 700);
+	const end = Math.min(html.length, idx + 60);
+	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
 }
 
 function qualityNameToDims(name) {
