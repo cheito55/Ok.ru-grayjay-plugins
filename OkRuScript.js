@@ -81,6 +81,8 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
+	// Construimos directamente las fuentes de video basadas en el CDN oficial de OK.ru (MyCDN)
+	// que es el destino final al que apuntan los reproductores, evitando bloqueos de proxy intermedios.
 	const videoSources = [
 		new VideoUrlSource({
 			name: "hd",
@@ -123,6 +125,63 @@ source.getContentDetails = function (url) {
 		video: new VideoSourceDescriptor(videoSources)
 	});
 };
+
+function parseMetadataFromHtml(html) {
+	if (!html) return null;
+
+	const dataOptionsRegex = /data-options="([^"]+)"/i;
+	let match = dataOptionsRegex.exec(html);
+	
+	if (!match) {
+		const altRegex = /data-options='([^']+)'/i;
+		match = altRegex.exec(html);
+	}
+
+	if (match) {
+		try {
+			const decoded = htmlDecode(match[1]);
+			const jsonOpts = JSON.parse(decoded);
+			const metadataStr = jsonOpts.flashvars?.metadata || jsonOpts.metadata;
+			if (metadataStr) {
+				return JSON.parse(decodeURIComponent(metadataStr));
+			}
+		} catch (e) {}
+	}
+
+	return null;
+}
+
+function buildVideoSources(metadata) {
+	const sources = [];
+
+	if (metadata.videos && Array.isArray(metadata.videos)) {
+		metadata.videos.forEach(v => {
+			if (!v.url) return;
+			const dims = qualityNameToDims(v.name);
+			sources.push(new VideoUrlSource({
+				name: v.name || "mp4",
+				url: v.url,
+				width: dims.width,
+				height: dims.height,
+				container: "video/mp4",
+				codec: "h264",
+				bitrate: 0,
+				duration: Math.round(metadata.movie?.duration || 0)
+			}));
+		});
+	}
+
+	if (metadata.hlsManifestUrl) {
+		sources.push(new HLSSource({
+			name: "HLS",
+			url: metadata.hlsManifestUrl,
+			duration: Math.round(metadata.movie?.duration || 0),
+			priority: true
+		}));
+	}
+
+	return sources;
+}
 
 function qualityNameToDims(name) {
 	switch (name) {
