@@ -1,7 +1,7 @@
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
-const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live)\/(\d+)/i;
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed|live)\/(\d+)/i;
 const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
@@ -32,21 +32,60 @@ source.searchSuggestions = function (query) {
 };
 
 source.search = function (query, type, order, filters) {
-	const url = `${BASE_URL}/web-api/search/video?st.query=${encodeURIComponent(query)}&st.mode=SEARCH&page=1`;
+	// Usamos la ruta alternativa de búsqueda compatible con web móvil
+	const url = `${BASE_URL}/dk?cmd=videoSearch&st.query=${encodeURIComponent(query)}&_aid=videoSearch`;
 
-	const resp = http.GET(url, { "Accept": "application/json" }, false);
+	const resp = http.GET(url, {
+		"User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+		"Accept": "text/html,application/xhtml+xml,xml"
+	}, false);
+	
 	if (!resp.isOk) {
 		throw new ScriptException(`Búsqueda falló (HTTP ${resp.code}) para "${query}"`);
 	}
 
-	let data;
-	try {
-		data = JSON.parse(resp.body);
-	} catch (e) {
-		throw new ScriptException("No se pudo parsear la respuesta de búsqueda de OK.ru: " + e);
+	const parser = new DOMParser();
+	const doc = parser.parseFromString(resp.body, "text/html");
+	const items = [];
+
+	// Extraer resultados parseando el HTML de la busqueda de OK.ru
+	const videoCards = doc.querySelectorAll(".video-card, .c-v-card");
+	if (videoCards) {
+		for (let i = 0; i < videoCards.length; i++) {
+			const card = videoCards[i];
+			const linkElem = card.querySelector("a.video-card_link, a");
+			if (!linkElem) continue;
+			
+			const href = linkElem.getAttribute("href") || "";
+			const match = REGEX_VIDEO_URL.exec(href);
+			if (!match) continue;
+
+			const videoId = match[1];
+			const titleElem = card.querySelector(".video-card_n, .video-card-title");
+			const title = titleElem ? titleElem.textContent.trim() : "Video de OK.ru";
+			
+			const imgElem = card.querySelector("img");
+			const thumbnail = imgElem ? (imgElem.getAttribute("src") || imgElem.getAttribute("data-src") || "") : "";
+
+			items.push(new PlatformVideo({
+				id: new PlatformID(PLATFORM, String(videoId), plugin.config.id),
+				name: title,
+				thumbnails: new Thumbnails([new Thumbnail(thumbnail, 0)]),
+				author: new PlatformAuthorLink(
+					new PlatformID(PLATFORM, "unknown", plugin.config.id),
+					"OK.ru",
+					BASE_URL,
+					""
+				),
+				datetime: 0,
+				duration: 0,
+				viewCount: 0,
+				url: `${BASE_URL}/video/${videoId}`,
+				isLive: false
+			}));
+		}
 	}
 
-	const items = (data.videos || data.items || []).map(mapSearchResultToPlatformVideo);
 	return new OkRuVideoPager(items, false);
 };
 
@@ -61,16 +100,32 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	const resp = http.GET(url, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+	// Forzar la URL de incrustación (embed) que es mucho más estable para extraer streams sin bloqueos de sesión completos
+	const embedUrl = `${BASE_URL}/videoembed/${videoId}`;
+	
+	const resp = http.GET(embedUrl, {
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+		"Referer": BASE_URL
 	}, false);
+
 	if (!resp.isOk) {
 		throw new ScriptException(`No se pudo cargar la página del video (HTTP ${resp.code})`);
 	}
 
-	const metadata = parseOkRuMetadata(resp.body);
+	let metadata = parseOkRuMetadata(resp.body);
+	
+	// Si falla en el embed, intentamos con la URL original
 	if (!metadata) {
-		throw new ScriptException("DIAGNOSTICO: " + buildDiagnosticSnippet(resp.body));
+		const respFull = http.GET(url, {
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+		}, false);
+		if (respFull.isOk) {
+			metadata = parseOkRuMetadata(respFull.body);
+		}
+	}
+
+	if (!metadata) {
+		throw new ScriptException("No se pudo extraer la metadata del video de OK.ru. Estructura cambiada.");
 	}
 
 	const movie = metadata.movie || {};
@@ -83,7 +138,7 @@ source.getContentDetails = function (url) {
 
 	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron URLs de video reproducibles (metadata: " + JSON.stringify(metadata).substring(0, 500) + ")");
+		throw new ScriptException("No se encontraron URLs de video reproducibles.");
 	}
 
 	return new PlatformVideoDetails({
@@ -109,11 +164,17 @@ source.getContentDetails = function (url) {
 function parseOkRuMetadata(html) {
 	let optionsMatch = REGEX_DATA_OPTIONS.exec(html);
 	if (!optionsMatch) {
+		// Búsqueda alternativa de JSON incrustado en variable de reproductor si data-options no está presente
+		const altMatch = /\"metadata"\s*:\s*("[^"]+")/.exec(html);
+		if (altMatch) {
+			try {
+				return JSON.parse(JSON.parse(altMatch[1]));
+			} catch (e) { }
+		}
 		return null;
 	}
 
 	const decodedOptions = htmlDecode(optionsMatch[1]);
-
 	let options;
 	try {
 		options = JSON.parse(decodedOptions);
@@ -129,8 +190,7 @@ function parseOkRuMetadata(html) {
 	let metadataStr = flashvars.metadata;
 	try {
 		metadataStr = decodeURIComponent(metadataStr);
-	} catch (e) {
-	}
+	} catch (e) { }
 
 	try {
 		return JSON.parse(metadataStr);
@@ -169,17 +229,6 @@ function buildVideoSources(metadata) {
 	return sources;
 }
 
-function buildDiagnosticSnippet(html) {
-	const idx = html.indexOf("flashvars");
-	if (idx === -1) {
-		return `(len=${html.length}) ni "flashvars" aparece. Inicio: ...${html.substring(0, 600)}...`;
-	}
-	const attrStart = html.lastIndexOf('="', idx);
-	const start = Math.max(0, attrStart - 250);
-	const end = Math.min(html.length, attrStart + 150);
-	return `(len=${html.length}) attr@${attrStart}: ...${html.substring(start, end)}...`;
-}
-
 function qualityNameToDims(name) {
 	switch (name) {
 		case "mobile": return { width: 320, height: 240 };
@@ -191,26 +240,6 @@ function qualityNameToDims(name) {
 		case "quad": return { width: 2560, height: 1440 };
 		default: return { width: 0, height: 0 };
 	}
-}
-
-function mapSearchResultToPlatformVideo(item) {
-	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
-	return new PlatformVideo({
-		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
-		name: item.title || "",
-		thumbnails: new Thumbnails([new Thumbnail(item.thumbnailUrl || item.poster || "", 0)]),
-		author: new PlatformAuthorLink(
-			new PlatformID(PLATFORM, String(item.authorId || ""), plugin.config.id),
-			item.authorName || "OK.ru",
-			item.authorUrl || BASE_URL,
-			item.authorPic || ""
-		),
-		datetime: 0,
-		duration: Math.round(item.duration || 0),
-		viewCount: item.viewsCount || 0,
-		url: videoUrl,
-		isLive: item.type === "LIVE"
-	});
 }
 
 function htmlDecode(str) {
