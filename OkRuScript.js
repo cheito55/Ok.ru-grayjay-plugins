@@ -1,7 +1,7 @@
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
-const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed|live)\/(\d+)/i;
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed|live|movie)\/(\d+)/i;
 
 var _settings = {};
 
@@ -31,11 +31,10 @@ source.searchSuggestions = function (query) {
 };
 
 source.search = function (query, type, order, filters) {
-	// Utilizamos el endpoint JSON alternativo o de sugerencias si el buscador web principal rechaza la conexión
 	const url = `${BASE_URL}/suggest?st.query=${encodeURIComponent(query)}`;
 
 	const resp = http.GET(url, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+		"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
 		"Accept": "application/json"
 	}, false);
 
@@ -43,7 +42,6 @@ source.search = function (query, type, order, filters) {
 	if (resp.isOk) {
 		try {
 			const data = JSON.parse(resp.body);
-			// Si la estructura de sugerencias trae elementos, los convertimos
 			const suggestions = data.suggestions || data.results || [];
 			suggestions.forEach((s, index) => {
 				const title = typeof s === "string" ? s : (s.value || s.title);
@@ -66,9 +64,7 @@ source.search = function (query, type, order, filters) {
 					}));
 				}
 			});
-		} catch (e) {
-			// Si falla el parseo de sugerencias, devolvemos vacío de forma controlada sin romper la app
-		}
+		} catch (e) {}
 	}
 
 	return new OkRuVideoPager(items, false);
@@ -85,22 +81,33 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Petición al reproductor embebido que contiene la metadata en crudo
-	const embedUrl = `${BASE_URL}/videoembed/${videoId}`;
-	const resp = http.GET(embedUrl, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-		"Referer": BASE_URL
+	// Intentamos primero atacando la versión móvil (m.ok.ru), la cual suele exponer el JSON de video de forma más accesible sin tanto script de rastreo
+	const mobileUrl = `https://m.ok.ru/video/${videoId}`;
+	const resp = http.GET(mobileUrl, {
+		"User-Agent": "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+		"Referer": "https://m.ok.ru/"
 	}, false);
 
-	if (!resp.isOk) {
-		throw new ScriptException(`No se pudo conectar con OK.ru (HTTP ${resp.code})`);
+	let html = "";
+	if (resp.isOk) {
+		html = resp.body;
 	}
 
-	const html = resp.body;
-	const metadata = parseMetadataFromHtml(html);
+	// Si la versión móvil falla, recurrimos al embed clásico como respaldo
+	if (!html || html.indexOf("data-options") === -1) {
+		const embedUrl = `${BASE_URL}/videoembed/${videoId}`;
+		const respEmbed = http.GET(embedUrl, {
+			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+			"Referer": BASE_URL
+		}, false);
+		if (respEmbed.isOk) {
+			html = respEmbed.body;
+		}
+	}
 
+	const metadata = parseMetadataFromHtml(html);
 	if (!metadata) {
-		throw new ScriptException("OK.ru protege este contenido o cambió el formato del reproductor.");
+		throw new ScriptException("OK.ru requiere autorización o cambió los metadatos del reproductor para este video.");
 	}
 
 	const movie = metadata.movie || {};
@@ -113,7 +120,7 @@ source.getContentDetails = function (url) {
 
 	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("El video no cuenta con fuentes de reproducción abiertas.");
+		throw new ScriptException("No se pudieron extraer los enlaces de video (Streams protegidos o vacíos).");
 	}
 
 	return new PlatformVideoDetails({
@@ -137,41 +144,45 @@ source.getContentDetails = function (url) {
 };
 
 function parseMetadataFromHtml(html) {
-	// Método 1: Buscar el bloque data-options estándar
-	const dataOptionsRegex = /data-options="([^"]+)"/i;
-	const match = dataOptionsRegex.exec(html);
-	if (match) {
-		try {
-			const decoded = htmlDecode(match[1]);
-			const jsonOpts = JSON.parse(decoded);
-			const metadataStr = jsonOpts.flashvars?.metadata || jsonOpts.metadata;
-			if (metadataStr) {
-				return JSON.parse(decodeURIComponent(metadataStr));
-			}
-		} catch (e) {}
-	}
+	if (!html) return null;
 
-	// Método 2: Buscar variables incrustadas directamente en scripts de la página (otkPlayerVars / binf)
-	const scriptRegex = /(\{.*ansamble.*\}|dwrap\.context\.player.*?\})/i;
-	// Patrón alternativo genérico para extraer JSON incrustado de videos en OK.ru
-	const altJsonRegex = /player\.setOptions\s*\(\s*(\{.+?\})\s*\)\s*;/i;
-	const altMatch = altJsonRegex.exec(html);
-	if (altMatch) {
-		try {
-			const opts = JSON.parse(altMatch[1]);
-			if (opts.flashvars?.metadata) {
-				return JSON.parse(decodeURIComponent(opts.flashvars.metadata));
-			}
-		} catch (e) {}
-	}
+	// Búsqueda exhaustiva del atributo data-options en diferentes formatos de comillas
+	const regexPatterns = [
+		/data-options="([^"]+)"/i,
+		/data-options='([^']+)'/i,
+		/\"metadata"\s*:\s*("[^"]+")/,
+		/player\.setOptions\s*\(\s*(\{.+?\})\s*\)\s*;/i
+	];
 
+	for (let i = 0; i < regexPatterns.length; i++) {
+		const match = regexPatterns[i].exec(html);
+		if (match) {
+			try {
+				let rawVal = match[1];
+				// Si es un string escapado JSON
+				if (rawVal.startsWith('"') && rawVal.endsWith('"')) {
+					rawVal = JSON.parse(rawVal);
+				}
+				const decoded = htmlDecode(rawVal);
+				const jsonOpts = JSON.parse(decoded);
+				const metadataStr = jsonOpts.flashvars?.metadata || jsonOpts.metadata || jsonOpts;
+				
+				if (typeof metadataStr === "string") {
+					return JSON.parse(decodeURIComponent(metadataStr));
+				} else if (typeof metadataStr === "object" && metadataStr.movie) {
+					return metadataStr;
+				}
+			} catch (e) {
+				// Continuar probando el siguiente patrón si falla este
+			}
+		}
+	}
 	return null;
 }
 
 function buildVideoSources(metadata) {
 	const sources = [];
 
-	// Extraer videos en formato progresivo (MP4)
 	if (metadata.videos && Array.isArray(metadata.videos)) {
 		metadata.videos.forEach(v => {
 			if (!v.url) return;
@@ -189,7 +200,6 @@ function buildVideoSources(metadata) {
 		});
 	}
 
-	// Añadir soporte HLS si está disponible
 	if (metadata.hlsManifestUrl) {
 		sources.push(new HLSSource({
 			name: "HLS",
