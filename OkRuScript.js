@@ -6,22 +6,24 @@
 //   flashvars.metadata (o flashvars.metadataUrl para pedirlo aparte).
 // - Dentro de metadata está movie (título, poster, duración) y
 //   hlsManifestUrl / hlsMasterPlaylistUrl con el link HLS firmado.
+// - La búsqueda usa el endpoint interno st.cmd=searchResult, que
+//   devuelve un HTML con bloques JSON "movie":{"info":{...}} doble-
+//   escapados como entidades HTML (&amp;quot; en vez de "), y no
+//   requiere sesión iniciada.
 //
 // IMPORTANTE - revisar antes de usar:
 // - Los nombres exactos de clases (HLSSource, VideoUrlSource,
-//   PlatformVideoDetails, PlatformID, PlatformAuthorLink, Thumbnails,
-//   VideoSourceDescriptor, VideoPager) son los que usan los plugins
-//   oficiales de GrayJay (ej. Odysee). Si alguna vuelve a tirar
+//   PlatformVideoDetails, PlatformVideo, PlatformID, PlatformAuthorLink,
+//   Thumbnails, VideoSourceDescriptor, VideoPager) son los que usan los
+//   plugins oficiales de GrayJay (ej. Odysee). Si alguna vuelve a tirar
 //   ReferenceError, es la próxima sospechosa.
 // - "PLATFORM" ya no se asume como global: se guarda el id real del
 //   plugin en PLUGIN_ID durante source.enable(conf, ...).
-// - search no está implementado: este plugin está pensado solo para
-//   reproducir un video de OK.ru a partir de su URL (pegás el link,
-//   no buscás dentro de GrayJay).
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
+const SEARCH_URL_BASE = "https://ok.ru/dk?st.cmd=searchResult&st.mode=Movie&st.grmode=Groups&st.query=";
 
 // Guardamos acá el id real del plugin, que llega como parámetro en
 // enable() -- NO existe un global "config" inyectado por GrayJay.
@@ -105,6 +107,68 @@ source.getContentDetails = function (url) {
 };
 
 // ------------------------------------------------------------
+// Búsqueda de videos
+// ------------------------------------------------------------
+// Usa el endpoint interno de búsqueda de OK.ru (st.cmd=searchResult),
+// que no requiere sesión iniciada (a diferencia del buscador visual
+// del sitio, que sí exige login). El HTML de respuesta trae bloques
+// JSON del tipo "movie":{"info":{...}} doble-escapados como entidades
+// HTML; hay que decodificarlos antes de parsear.
+source.search = function (query, type, order, filters) {
+    if (!query) {
+        return new VideoPager([], false, {});
+    }
+
+    const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
+
+    const resp = http.GET(searchUrl, {
+        "Referer": "https://ok.ru/video"
+    }, false);
+
+    if (!resp.isOk) {
+        throw new ScriptException("No se pudo cargar la búsqueda de OK.ru (status " + resp.code + ")");
+    }
+
+    // El HTML viene con el JSON doble-escapado como entidades HTML
+    const html = resp.body
+        .replace(/&amp;quot;/g, '"')
+        .replace(/&amp;amp;/g, "&");
+
+    const results = [];
+    // Cada resultado trae un bloque "movie":{"info":{...}} con
+    // href, id, provider, title, description, thumbnail y demás.
+    const regex = /"movie":\{"info":\{"href":"([^"]+)","id":"(\d+)","provider":"[^"]*","title":"((?:[^"\\]|\\.)*)","description":"(?:[^"\\]|\\.)*","thumbnail":\{"small":"((?:[^"\\]|\\.)*)"[^}]*\},[^}]*"duration":(\d+)[^}]*"totalViews":(\d+)/g;
+
+    let match;
+    while ((match = regex.exec(html)) !== null) {
+        const videoId = match[2];
+        const title = safeJsonUnescape(match[3]);
+        const thumbUrl = safeJsonUnescape(match[4]).replace(/\\u0026/g, "&");
+        const durationMs = parseInt(match[5], 10) || 0;
+        const viewCount = parseInt(match[6], 10) || 0;
+
+        results.push(new PlatformVideo({
+            id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
+            name: title,
+            thumbnails: new Thumbnails([{ url: thumbUrl, quality: 480 }]),
+            author: new PlatformAuthorLink(
+                new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
+                "OK.ru",
+                "",
+                ""
+            ),
+            uploadDate: 0,
+            duration: Math.round(durationMs / 1000),
+            viewCount: viewCount,
+            url: "https://ok.ru/video/" + videoId,
+            isLive: false
+        }));
+    }
+
+    return new VideoPager(results, false, {});
+};
+
+// ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
 function buildVideoDetails(videoId, pageUrl, metadata) {
@@ -175,6 +239,17 @@ function unescapeHtml(str) {
         .replace(/&gt;/g, ">");
 }
 
+// Los títulos/urls extraídos por regex vienen como fragmentos de un
+// string JSON (con \/ , \uXXXX, etc). Envolverlos entre comillas y
+// pasarlos por JSON.parse es la forma más segura de desescaparlos.
+function safeJsonUnescape(fragment) {
+    try {
+        return JSON.parse('"' + fragment + '"');
+    } catch (e) {
+        return fragment;
+    }
+}
+
 // ------------------------------------------------------------
 // Stubs requeridos por la interfaz de plugin
 // ------------------------------------------------------------
@@ -185,8 +260,4 @@ function unescapeHtml(str) {
 // este es el próximo lugar a revisar.
 source.getHome = function () {
     return new VideoPager([], false, {});
-};
-
-source.search = function (query) {
-    throw new ScriptException("Este plugin no soporta búsqueda, pegá directamente la URL del video de OK.ru.");
 };
