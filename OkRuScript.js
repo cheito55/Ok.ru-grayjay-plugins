@@ -2,7 +2,7 @@ const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
 // Reemplaza esta URL con la tuya real de Vercel
-const BRIDGE_API_URL = "https://ok-ru-grayjay-plugins.vercel.app/api/okru";
+const BRIDGE_API_URL = "https://okru-app.vercel.app/api/okru";
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live|videoembed|movie)\/(\d+)/i;
 const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
