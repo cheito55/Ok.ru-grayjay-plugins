@@ -1,10 +1,10 @@
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
-// Reemplaza esta URL con la que te asigne Vercel al desplegar tu proyecto
-const BRIDGE_API_URL = "https://TU-PROYECTO.vercel.app/api/okru";
+// Reemplaza esta URL con la tuya real de Vercel cuando la despliegues
+const BRIDGE_API_URL = "https://ok-ru-grayjay-plugins.vercel.app/api/okru";
 
-const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed|live|movie)\/(\d+)/i;
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live|videoembed|movie)\/(\d+)/i;
 
 var _settings = {};
 
@@ -34,38 +34,21 @@ source.searchSuggestions = function (query) {
 };
 
 source.search = function (query, type, order, filters) {
-	const url = `${BASE_URL}/suggest?st.query=${encodeURIComponent(query)}`;
-	const resp = http.GET(url, { "Accept": "application/json" }, false);
+	const url = `${BASE_URL}/web-api/search/video?st.query=${encodeURIComponent(query)}&st.mode=SEARCH&page=1`;
 
-	let items = [];
-	if (resp.isOk) {
-		try {
-			const data = JSON.parse(resp.body);
-			const suggestions = data.suggestions || data.results || [];
-			suggestions.forEach((s, index) => {
-				const title = typeof s === "string" ? s : (s.value || s.title);
-				if (title) {
-					items.push(new PlatformVideo({
-						id: new PlatformID(PLATFORM, `search_${index}_${Date.now()}`, plugin.config.id),
-						name: title,
-						thumbnails: new Thumbnails([]),
-						author: new PlatformAuthorLink(
-							new PlatformID(PLATFORM, "unknown", plugin.config.id),
-							"OK.ru",
-							BASE_URL,
-							""
-						),
-						datetime: 0,
-						duration: 0,
-						viewCount: 0,
-						url: `${BASE_URL}/video/search?st.query=${encodeURIComponent(title)}`,
-						isLive: false
-					}));
-				}
-			});
-		} catch (e) {}
+	const resp = http.GET(url, { "Accept": "application/json" }, false);
+	if (!resp.isOk) {
+		throw new ScriptException(`Búsqueda falló (HTTP ${resp.code}) para "${query}"`);
 	}
 
+	let data;
+	try {
+		data = JSON.parse(resp.body);
+	} catch (e) {
+		throw new ScriptException("No se pudo parsear la respuesta de búsqueda de OK.ru: " + e);
+	}
+
+	const items = (data.videos || data.items || []).map(mapSearchResultToPlatformVideo);
 	return new OkRuVideoPager(items, false);
 };
 
@@ -80,13 +63,13 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Consultamos a nuestro servidor en Vercel para que extraiga los enlaces limpios
+	// Consultamos directamente al servidor puente en Vercel para extraer los datos de forma limpia
 	const resp = http.GET(`${BRIDGE_API_URL}?id=${videoId}`, {
 		"Accept": "application/json"
 	}, false);
 
 	if (!resp.isOk) {
-		throw new ScriptException(`Error al conectar con el puente (HTTP ${resp.code})`);
+		throw new ScriptException(`Error al conectar con el servidor puente (HTTP ${resp.code})`);
 	}
 
 	let data;
@@ -99,6 +82,11 @@ source.getContentDetails = function (url) {
 	if (data.error) {
 		throw new ScriptException("Error del servidor: " + data.error);
 	}
+
+	const title = data.title || "Video de OK.ru";
+	const thumbnailUrl = data.poster || "";
+	const duration = Math.round(data.duration || 0);
+	const isLive = data.isLive || false;
 
 	const videoSources = [];
 
@@ -113,7 +101,7 @@ source.getContentDetails = function (url) {
 			container: "video/mp4",
 			codec: "h264",
 			bitrate: 0,
-			duration: Math.round(data.duration || 0)
+			duration: duration
 		}));
 	});
 
@@ -121,19 +109,19 @@ source.getContentDetails = function (url) {
 		videoSources.push(new HLSSource({
 			name: "HLS",
 			url: data.hlsManifestUrl,
-			duration: Math.round(data.duration || 0),
+			duration: duration,
 			priority: true
 		}));
 	}
 
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron fuentes de video reproducibles.");
+		throw new ScriptException("No se encontraron fuentes de video reproducibles desde el servidor puente.");
 	}
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
-		name: data.title || "Video de OK.ru",
-		thumbnails: new Thumbnails([data.poster ? new Thumbnail(data.poster, 0) : null].filter(Boolean)),
+		name: title,
+		thumbnails: new Thumbnails([thumbnailUrl ? new Thumbnail(thumbnailUrl, 0) : null].filter(Boolean)),
 		author: new PlatformAuthorLink(
 			new PlatformID(PLATFORM, "unknown", plugin.config.id),
 			"OK.ru",
@@ -141,11 +129,11 @@ source.getContentDetails = function (url) {
 			""
 		),
 		datetime: 0,
-		duration: Math.round(data.duration || 0),
+		duration: duration,
 		viewCount: 0,
 		url: url,
 		shareUrl: url,
-		isLive: false,
+		isLive: isLive,
 		video: new VideoSourceDescriptor(videoSources)
 	});
 };
@@ -161,6 +149,26 @@ function qualityNameToDims(name) {
 		case "quad": return { width: 2560, height: 1440 };
 		default: return { width: 0, height: 0 };
 	}
+}
+
+function mapSearchResultToPlatformVideo(item) {
+	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
+	return new PlatformVideo({
+		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
+		name: item.title || "",
+		thumbnails: new Thumbnails([new Thumbnail(item.thumbnailUrl || item.poster || "", 0)]),
+		author: new PlatformAuthorLink(
+			new PlatformID(PLATFORM, String(item.authorId || ""), plugin.config.id),
+			item.authorName || "OK.ru",
+			item.authorUrl || BASE_URL,
+			item.authorPic || ""
+		),
+		datetime: 0,
+		duration: Math.round(item.duration || 0),
+		viewCount: item.viewsCount || 0,
+		url: videoUrl,
+		isLive: item.type === "LIVE"
+	});
 }
 
 class OkRuVideoPager extends VideoPager {
