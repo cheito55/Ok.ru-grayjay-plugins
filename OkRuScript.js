@@ -32,9 +32,9 @@ source.searchSuggestions = function (query) {
 
 source.search = function (query, type, order, filters) {
 	const url = `${BASE_URL}/suggest?st.query=${encodeURIComponent(query)}`;
+	const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(url);
 
-	const resp = http.GET(url, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+	const resp = http.GET(proxyUrl, {
 		"Accept": "application/json"
 	}, false);
 
@@ -81,23 +81,22 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Forzamos la petición al reproductor embebido con cabeceras de navegador de escritorio imitando una sesión limpia
-	const embedUrl = `${BASE_URL}/videoembed/${videoId}`;
-	const resp = http.GET(embedUrl, {
+	// Apuntamos al reproductor embed de OK.ru a través de un proxy CORS gratuito
+	const targetUrl = `${BASE_URL}/videoembed/${videoId}`;
+	const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
+
+	const resp = http.GET(proxyUrl, {
 		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-		"Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-		"Referer": `${BASE_URL}/video/${videoId}`
+		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
 	}, false);
 
 	if (!resp.isOk) {
-		throw new ScriptException(`No se pudo conectar con OK.ru (HTTP ${resp.code})`);
+		throw new ScriptException(`No se pudo conectar a través del proxy (HTTP ${resp.code})`);
 	}
 
 	const html = resp.body;
 	const metadata = parseMetadataFromHtml(html);
 
-	// Si el método por HTML falla por completo, generamos un enlace de respaldo directo mediante HLS/MP4 genérico del CDN de MyCDN si el ID es válido
 	let videoSources = [];
 	let title = "Video de OK.ru (" + videoId + ")";
 	let thumbnailUrl = "";
@@ -116,8 +115,7 @@ source.getContentDetails = function (url) {
 		videoSources = buildVideoSources(metadata);
 	}
 
-	// RESPALDO DE EMERGENCIA: Si OK.ru bloqueó el JSON pero el ID es válido, 
-	// inyectamos la estructura base para forzar al reproductor nativo de GrayJay a intentar la carga por enlace directo del CDN.
+	// Respaldo directo al CDN si el parsing del HTML falla por completo
 	if (videoSources.length === 0) {
 		videoSources.push(new VideoUrlSource({
 			name: "sd",
@@ -154,12 +152,10 @@ source.getContentDetails = function (url) {
 function parseMetadataFromHtml(html) {
 	if (!html) return null;
 
-	// Búsqueda estricta de data-options
 	const dataOptionsRegex = /data-options="([^"]+)"/i;
 	let match = dataOptionsRegex.exec(html);
 	
 	if (!match) {
-		// Intentar con comillas simples
 		const altRegex = /data-options='([^']+)'/i;
 		match = altRegex.exec(html);
 	}
@@ -171,17 +167,6 @@ function parseMetadataFromHtml(html) {
 			const metadataStr = jsonOpts.flashvars?.metadata || jsonOpts.metadata;
 			if (metadataStr) {
 				return JSON.parse(decodeURIComponent(metadataStr));
-			}
-		} catch (e) {}
-	}
-
-	// Búsqueda alternativa por bloque de script interno de variables de reproductor
-	const scriptMatch = /player\.setOptions\s*\(\s*(\{.+?\})\s*\)\s*;/i.exec(html);
-	if (scriptMatch) {
-		try {
-			const opts = JSON.parse(scriptMatch[1]);
-			if (opts.flashvars?.metadata) {
-				return JSON.parse(decodeURIComponent(opts.flashvars.metadata));
 			}
 		} catch (e) {}
 	}
