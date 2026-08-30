@@ -1,10 +1,11 @@
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
-// Reemplaza esta URL con la tuya real de Vercel cuando la despliegues
+// Reemplaza esta URL con la tuya real de Vercel
 const BRIDGE_API_URL = "https://ok-ru-grayjay-plugins.vercel.app/api/okru";
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live|videoembed|movie)\/(\d+)/i;
+const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
 
@@ -63,7 +64,7 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Consultamos directamente al servidor puente en Vercel para extraer los datos de forma limpia
+	// Consultamos a nuestro servidor puente en Vercel para obtener los datos limpios
 	const resp = http.GET(`${BRIDGE_API_URL}?id=${videoId}`, {
 		"Accept": "application/json"
 	}, false);
@@ -138,6 +139,80 @@ source.getContentDetails = function (url) {
 	});
 };
 
+function parseOkRuMetadata(html) {
+	let optionsMatch = REGEX_DATA_OPTIONS.exec(html);
+	if (!optionsMatch) {
+		return null;
+	}
+
+	const decodedOptions = htmlDecode(optionsMatch[1]);
+
+	let options;
+	try {
+		options = JSON.parse(decodedOptions);
+	} catch (e) {
+		return null;
+	}
+
+	const flashvars = options.flashvars || options;
+	if (!flashvars || !flashvars.metadata) {
+		return null;
+	}
+
+	let metadataStr = flashvars.metadata;
+	try {
+		metadataStr = decodeURIComponent(metadataStr);
+	} catch (e) {
+	}
+
+	try {
+		return JSON.parse(metadataStr);
+	} catch (e) {
+		return null;
+	}
+}
+
+function buildVideoSources(metadata) {
+	const sources = [];
+
+	(metadata.videos || []).forEach(v => {
+		if (!v.url) return;
+		const dims = qualityNameToDims(v.name);
+		sources.push(new VideoUrlSource({
+			name: v.name || "mp4",
+			url: v.url,
+			width: dims.width,
+			height: dims.height,
+			container: "video/mp4",
+			codec: "h264",
+			bitrate: 0,
+			duration: Math.round(metadata.movie?.duration || 0)
+		}));
+	});
+
+	if (metadata.hlsManifestUrl) {
+		sources.push(new HLSSource({
+			name: "HLS",
+			url: metadata.hlsManifestUrl,
+      duration: Math.round(metadata.movie?.duration || 0),
+			priority: true
+		}));
+	}
+
+	return sources;
+}
+
+function buildDiagnosticSnippet(html) {
+	const idx = html.indexOf("flashvars");
+	if (idx === -1) {
+		return `(len=${html.length}) ni "flashvars" aparece. Inicio: ...${html.substring(0, 600)}...`;
+	}
+	const attrStart = html.lastIndexOf('="', idx);
+	const start = Math.max(0, attrStart - 250);
+	const end = Math.min(html.length, attrStart + 150);
+	return `(len=${html.length}) attr@${attrStart}: ...${html.substring(start, end)}...`;
+}
+
 function qualityNameToDims(name) {
 	switch (name) {
 		case "mobile": return { width: 320, height: 240 };
@@ -169,6 +244,15 @@ function mapSearchResultToPlatformVideo(item) {
 		url: videoUrl,
 		isLive: item.type === "LIVE"
 	});
+}
+
+function htmlDecode(str) {
+	return str
+		.replace(/&quot;/g, "\"")
+		.replace(/&amp;/g, "&")
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&#39;/g, "'");
 }
 
 class OkRuVideoPager extends VideoPager {
