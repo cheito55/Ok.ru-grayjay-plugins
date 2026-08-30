@@ -1,244 +1,183 @@
-const PLATFORM = "OkRu";
-const BASE_URL = "https://ok.ru";
+// ============================================================
+// Plugin de GrayJay para OK.ru (Odnoklassniki)
+// ============================================================
+// Basado en la lógica de extracción usada por streamlink y yt-dlp:
+// - La página del video trae un atributo data-options="{...}" con
+//   flashvars.metadata (o flashvars.metadataUrl para pedirlo aparte).
+// - Dentro de metadata está movie (título, poster, duración) y
+//   hlsManifestUrl / hlsMasterPlaylistUrl con el link HLS firmado.
+//
+// IMPORTANTE - revisar antes de usar:
+// - Los nombres exactos de clases (HLSSource, VideoUrlSource,
+//   PlatformVideoDetails, PlatformID, PlatformAuthorLink, Thumbnails,
+//   VideoSourceDescriptor) son los que usan los plugins oficiales de
+//   GrayJay (ej. Odysee). Confirmalos contra ese ejemplo si algo no
+//   carga, porque pueden variar entre versiones de la app.
+// - "PLATFORM" y "config" son inyectados por GrayJay en tiempo de
+//   ejecución del plugin, no hace falta definirlos.
+// - search/getHome no están implementados: este plugin está pensado
+//   solo para reproducir un video de OK.ru a partir de su URL
+//   (pegás el link, no buscás dentro de GrayJay).
+// ============================================================
 
-const REGEX_VIDEO_URL = /ok\.ru\/(?:video|live)\/(\d+)/i;
-const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
+const PLATFORM_NAME = "OK.ru";
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
 
-var _settings = {};
-
+// ------------------------------------------------------------
+// Habilitación del plugin (obligatorio en la mayoría de plugins)
+// ------------------------------------------------------------
 source.enable = function (conf, settings, savedState) {
-	_settings = settings ?? {};
-	log("[OK.ru] plugin habilitado");
+    // No requiere login ni estado guardado por ahora.
 };
 
-source.disable = function () {
-	log("[OK.ru] plugin deshabilitado");
-};
-
-source.getHome = function () {
-	return new OkRuVideoPager([], false);
-};
-
-source.getSearchCapabilities = function () {
-	return {
-		types: [Type.Feed.Mixed],
-		sorts: [Type.Order.Chronological],
-		filters: []
-	};
-};
-
-source.searchSuggestions = function (query) {
-	return [];
-};
-
-source.search = function (query, type, order, filters) {
-	const url = `${BASE_URL}/web-api/search/video?st.query=${encodeURIComponent(query)}&st.mode=SEARCH&page=1`;
-
-	const resp = http.GET(url, { "Accept": "application/json" }, false);
-	if (!resp.isOk) {
-		throw new ScriptException(`Búsqueda falló (HTTP ${resp.code}) para "${query}"`);
-	}
-
-	let data;
-	try {
-		data = JSON.parse(resp.body);
-	} catch (e) {
-		throw new ScriptException("No se pudo parsear la respuesta de búsqueda de OK.ru: " + e);
-	}
-
-	const items = (data.videos || data.items || []).map(mapSearchResultToPlatformVideo);
-	return new OkRuVideoPager(items, false);
-};
-
+// ------------------------------------------------------------
+// Detección de URLs que este plugin puede manejar
+// ------------------------------------------------------------
 source.isContentDetailsUrl = function (url) {
-	return REGEX_VIDEO_URL.test(url);
+    return REGEX_VIDEO_URL.test(url);
 };
 
+// ------------------------------------------------------------
+// Obtención del detalle/reproducción del video
+// ------------------------------------------------------------
 source.getContentDetails = function (url) {
-	const match = REGEX_VIDEO_URL.exec(url);
-	if (!match) {
-		throw new ScriptException("URL de video de OK.ru no reconocida: " + url);
-	}
-	const videoId = match[1];
+    const match = url.match(REGEX_VIDEO_URL);
+    if (!match) {
+        throw new ScriptException("URL de OK.ru no reconocida: " + url);
+    }
+    const videoId = match[1];
+    const pageUrl = "https://ok.ru/video/" + videoId;
 
-	const resp = http.GET(url, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-	}, false);
-	if (!resp.isOk) {
-		throw new ScriptException(`No se pudo cargar la página del video (HTTP ${resp.code})`);
-	}
+    const resp = http.GET(pageUrl, {
+        "Referer": "https://ok.ru/"
+    }, false);
 
-	const metadata = parseOkRuMetadata(resp.body);
-	if (!metadata) {
-		throw new ScriptException("DIAGNOSTICO: " + buildDiagnosticSnippet(resp.body));
-	}
+    if (!resp.isOk) {
+        throw new ScriptException("No se pudo cargar la página de OK.ru (status " + resp.code + ")");
+    }
 
-	const movie = metadata.movie || {};
-	const author = metadata.author || {};
+    const html = resp.body;
 
-	const title = movie.title || "Video de OK.ru";
-	const thumbnailUrl = movie.poster || "";
-	const duration = Math.round(movie.duration || 0);
-	const isLive = movie.type === "LIVE" || !!metadata.isLive;
+    // Chequeo de video no disponible / privado / borrado
+    const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
+    if (stubError) {
+        throw new ScriptException("Video no disponible: " + stubError[1]);
+    }
 
-	const videoSources = buildVideoSources(metadata);
-	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron URLs de video reproducibles para este contenido (puede estar geobloqueado o requerir login).");
-	}
+    // Extraer data-options="{...}"
+    const optionsMatch = html.match(/data-options="([^"]+)"/);
+    if (!optionsMatch) {
+        throw new ScriptException("No se encontró data-options en la página (¿cambió el sitio?)");
+    }
 
-	return new PlatformVideoDetails({
-		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
-		name: title,
-		thumbnails: new Thumbnails([new Thumbnail(thumbnailUrl, 0)]),
-		author: new PlatformAuthorLink(
-			new PlatformID(PLATFORM, String(author.id || ""), plugin.config.id),
-			author.name || "OK.ru",
-			author.url || BASE_URL,
-			author.pic || ""
-		),
-		datetime: 0,
-		duration: duration,
-		viewCount: movie.viewsCount || movie.totalCount || 0,
-		url: url,
-		shareUrl: url,
-		isLive: isLive,
-		video: new VideoSourceDescriptor(videoSources)
-	});
+    const optionsJson = unescapeHtml(optionsMatch[1]);
+    let options;
+    try {
+        options = JSON.parse(optionsJson);
+    } catch (e) {
+        throw new ScriptException("No se pudo parsear data-options: " + e);
+    }
+
+    const flashvars = options.flashvars || {};
+    let metadata;
+
+    if (flashvars.metadata) {
+        metadata = JSON.parse(flashvars.metadata);
+    } else if (flashvars.metadataUrl) {
+        const metadataUrl = decodeURIComponent(flashvars.metadataUrl);
+        const metaResp = http.POST(metadataUrl, "", {
+            "Referer": pageUrl,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }, false);
+        if (!metaResp.isOk) {
+            throw new ScriptException("No se pudo obtener metadataUrl (status " + metaResp.code + ")");
+        }
+        metadata = JSON.parse(metaResp.body);
+    } else {
+        throw new ScriptException("No se encontró metadata ni metadataUrl en flashvars");
+    }
+
+    return buildVideoDetails(videoId, pageUrl, metadata);
 };
 
-function parseOkRuMetadata(html) {
-	let optionsMatch = REGEX_DATA_OPTIONS.exec(html);
-	if (!optionsMatch) {
-		return null;
-	}
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+function buildVideoDetails(videoId, pageUrl, metadata) {
+    const movie = metadata.movie || {};
+    const author = metadata.author || {};
 
-	const decodedOptions = htmlDecode(optionsMatch[1]);
+    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
 
-	let options;
-	try {
-		options = JSON.parse(decodedOptions);
-	} catch (e) {
-		return null;
-	}
+    const sources = [];
 
-	const flashvars = options.flashvars || options;
-	if (!flashvars) {
-		return null;
-	}
+    if (hlsUrl) {
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: hlsUrl,
+            duration: intOrZero(movie.duration)
+        }));
+    }
 
-	if (flashvars.metadata) {
-		let metadataStr = flashvars.metadata;
-		try {
-			metadataStr = decodeURIComponent(metadataStr);
-		} catch (e) {
-		}
-		try {
-			return JSON.parse(metadataStr);
-		} catch (e) {
-			return null;
-		}
-	}
+    // Fallback a mp4 directos si no hay HLS (algunos videos viejos)
+    if (Array.isArray(metadata.videos)) {
+        for (const v of metadata.videos) {
+            if (v && v.url) {
+                sources.push(new VideoUrlSource({
+                    name: v.name || "mp4",
+                    url: v.url,
+                    container: "video/mp4"
+                }));
+            }
+        }
+    }
 
-	if (flashvars.metadataUrl) {
-		const metaResp = http.GET(flashvars.metadataUrl, {}, false);
-		if (!metaResp.isOk) return null;
-		try {
-			return JSON.parse(metaResp.body);
-		} catch (e) {
-			return null;
-		}
-	}
+    if (sources.length === 0) {
+        if (metadata.paymentInfo) {
+            throw new ScriptException("Este video es pago en OK.ru, no se puede reproducir sin comprarlo.");
+        }
+        throw new ScriptException("No se encontró ninguna fuente de video reproducible.");
+    }
 
-	return null;
+    return new PlatformVideoDetails({
+        id: new PlatformID(PLATFORM_NAME, videoId, config.id),
+        name: movie.title || "Video de OK.ru",
+        thumbnails: movie.poster ? new Thumbnails([{ url: movie.poster, quality: 720 }]) : new Thumbnails([]),
+        duration: intOrZero(movie.duration),
+        viewCount: 0,
+        url: pageUrl,
+        isLive: false,
+        author: new PlatformAuthorLink(
+            new PlatformID(PLATFORM_NAME, String(author.id || ""), config.id),
+            author.name || "OK.ru",
+            "",
+            ""
+        ),
+        video: new VideoSourceDescriptor(sources)
+    });
 }
 
-function buildVideoSources(metadata) {
-	const sources = [];
-
-	(metadata.videos || []).forEach(v => {
-		if (!v.url) return;
-		const dims = qualityNameToDims(v.name);
-		sources.push(new VideoUrlSource({
-			name: v.name || "mp4",
-			url: v.url,
-			width: dims.width,
-			height: dims.height,
-			container: "video/mp4",
-			codec: "h264",
-			bitrate: 0,
-			duration: Math.round(metadata.movie?.duration || 0)
-		}));
-	});
-
-	if (metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl) {
-		sources.push(new HLSSource({
-			name: "HLS",
-			url: metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl,
-			duration: Math.round(metadata.movie?.duration || 0),
-			priority: true
-		}));
-	}
-
-	return sources;
+function intOrZero(v) {
+    const n = parseInt(v, 10);
+    return isNaN(n) ? 0 : n;
 }
 
-function buildDiagnosticSnippet(html) {
-	const idx = html.indexOf("flashvars");
-	if (idx === -1) {
-		return `(len=${html.length}) ni siquiera "flashvars" aparece. Inicio del HTML: ...${html.substring(0, 600)}...`;
-	}
-	const start = Math.max(0, idx - 700);
-	const end = Math.min(html.length, idx + 60);
-	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
+function unescapeHtml(str) {
+    return str
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
 }
 
-function qualityNameToDims(name) {
-	switch (name) {
-		case "mobile": return { width: 320, height: 240 };
-		case "lowest": return { width: 426, height: 240 };
-		case "low": return { width: 640, height: 360 };
-		case "sd": return { width: 854, height: 480 };
-		case "hd": return { width: 1280, height: 720 };
-		case "full": return { width: 1920, height: 1080 };
-		case "quad": return { width: 2560, height: 1440 };
-		default: return { width: 0, height: 0 };
-	}
-}
+// ------------------------------------------------------------
+// Stubs requeridos por la interfaz de plugin (sin implementar)
+// ------------------------------------------------------------
+source.getHome = function () {
+    throw new ScriptException("Este plugin no soporta feed de inicio, solo reproducción por URL.");
+};
 
-function mapSearchResultToPlatformVideo(item) {
-	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
-	return new PlatformVideo({
-		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
-		name: item.title || "",
-		thumbnails: new Thumbnails([new Thumbnail(item.thumbnailUrl || item.poster || "", 0)]),
-		author: new PlatformAuthorLink(
-			new PlatformID(PLATFORM, String(item.authorId || ""), plugin.config.id),
-			item.authorName || "OK.ru",
-			item.authorUrl || BASE_URL,
-			item.authorPic || ""
-		),
-		datetime: 0,
-		duration: Math.round(item.duration || 0),
-		viewCount: item.viewsCount || 0,
-		url: videoUrl,
-		isLive: item.type === "LIVE"
-	});
-}
-
-function htmlDecode(str) {
-	return str
-		.replace(/&quot;/g, "\"")
-		.replace(/&amp;/g, "&")
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&#39;/g, "'");
-}
-
-class OkRuVideoPager extends VideoPager {
-	constructor(results, hasMore, context) {
-		super(results, hasMore, context ?? {});
-	}
-	nextPage() {
-		return new OkRuVideoPager([], false, this.context);
-	}
-}
+source.search = function (query) {
+    throw new ScriptException("Este plugin no soporta búsqueda, pegá directamente la URL del video de OK.ru.");
+};
