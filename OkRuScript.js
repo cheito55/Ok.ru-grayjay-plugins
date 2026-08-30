@@ -122,7 +122,10 @@ source.search = function (query, type, order, filters) {
     const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
 
     const resp = http.GET(searchUrl, {
-        "Referer": "https://ok.ru/video"
+        "Referer": "https://ok.ru/video",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
     }, false);
 
     if (!resp.isOk) {
@@ -133,6 +136,18 @@ source.search = function (query, type, order, filters) {
     const html = resp.body
         .replace(/&amp;quot;/g, '"')
         .replace(/&amp;amp;/g, "&");
+
+    // Diagnóstico: si no aparece ni un solo bloque "movie":{"info", algo
+    // cambió en la respuesta (bloqueo por User-Agent, HTML distinto, etc).
+    // Tirar el error acá (con el tamaño de la respuesta) ayuda a distinguir
+    // "0 resultados reales" de "la página vino vacía/distinta".
+    if (html.indexOf('"movie":{"info"') === -1) {
+        throw new ScriptException(
+            "Búsqueda sin resultados reconocibles. Tamaño de respuesta: " +
+            html.length + " caracteres. Contiene 'Присоединяйтесь': " +
+            (html.indexOf("\u041f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d") !== -1)
+        );
+    }
 
     const results = [];
     // Cada resultado trae un bloque "movie":{"info":{...}} con
