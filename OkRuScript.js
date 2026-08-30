@@ -173,11 +173,18 @@ function buildVideoSources(metadata) {
 function buildDiagnosticSnippet(html) {
 	const idx = html.indexOf("flashvars");
 	if (idx === -1) {
-		return `(len=${html.length}) ni siquiera "flashvars" aparece. Inicio del HTML: ...${html.substring(0, 600)}...`;
+		return `(len=${html.length}) ni "flashvars" aparece. Inicio: ...${html.substring(0, 600)}...`;
 	}
-	const start = Math.max(0, idx - 700);
-	const end = Math.min(html.length, idx + 60);
-	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
+	// Buscamos el último `="` SIN escapar antes de "flashvars": como todo el
+	// JSON interno usa &quot; en vez de comillas reales, el `="` real tiene
+	// que ser el borde del atributo HTML que envuelve todo esto.
+	const attrStart = html.lastIndexOf('="', idx);
+	if (attrStart === -1) {
+		return `(len=${html.length}) no encontré ="` + ` antes de flashvars (pos=${idx})`;
+	}
+	const start = Math.max(0, attrStart - 250);
+	const end = Math.min(html.length, attrStart + 150);
+	return `(len=${html.length}) attr@${attrStart}: ...${html.substring(start, end)}...`;
 }
 
 function qualityNameToDims(name) {
