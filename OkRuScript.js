@@ -2,7 +2,6 @@ const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed|live)\/(\d+)/i;
-const REGEX_DATA_OPTIONS = /data-module="OKVideo"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
 
@@ -32,57 +31,43 @@ source.searchSuggestions = function (query) {
 };
 
 source.search = function (query, type, order, filters) {
-	// Usamos la ruta alternativa de búsqueda compatible con web móvil
-	const url = `${BASE_URL}/dk?cmd=videoSearch&st.query=${encodeURIComponent(query)}&_aid=videoSearch`;
+	// Utilizamos el endpoint JSON alternativo o de sugerencias si el buscador web principal rechaza la conexión
+	const url = `${BASE_URL}/suggest?st.query=${encodeURIComponent(query)}`;
 
 	const resp = http.GET(url, {
-		"User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
-		"Accept": "text/html,application/xhtml+xml,xml"
+		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+		"Accept": "application/json"
 	}, false);
-	
-	if (!resp.isOk) {
-		throw new ScriptException(`Búsqueda falló (HTTP ${resp.code}) para "${query}"`);
-	}
 
-	const parser = new DOMParser();
-	const doc = parser.parseFromString(resp.body, "text/html");
-	const items = [];
-
-	// Extraer resultados parseando el HTML de la busqueda de OK.ru
-	const videoCards = doc.querySelectorAll(".video-card, .c-v-card");
-	if (videoCards) {
-		for (let i = 0; i < videoCards.length; i++) {
-			const card = videoCards[i];
-			const linkElem = card.querySelector("a.video-card_link, a");
-			if (!linkElem) continue;
-			
-			const href = linkElem.getAttribute("href") || "";
-			const match = REGEX_VIDEO_URL.exec(href);
-			if (!match) continue;
-
-			const videoId = match[1];
-			const titleElem = card.querySelector(".video-card_n, .video-card-title");
-			const title = titleElem ? titleElem.textContent.trim() : "Video de OK.ru";
-			
-			const imgElem = card.querySelector("img");
-			const thumbnail = imgElem ? (imgElem.getAttribute("src") || imgElem.getAttribute("data-src") || "") : "";
-
-			items.push(new PlatformVideo({
-				id: new PlatformID(PLATFORM, String(videoId), plugin.config.id),
-				name: title,
-				thumbnails: new Thumbnails([new Thumbnail(thumbnail, 0)]),
-				author: new PlatformAuthorLink(
-					new PlatformID(PLATFORM, "unknown", plugin.config.id),
-					"OK.ru",
-					BASE_URL,
-					""
-				),
-				datetime: 0,
-				duration: 0,
-				viewCount: 0,
-				url: `${BASE_URL}/video/${videoId}`,
-				isLive: false
-			}));
+	let items = [];
+	if (resp.isOk) {
+		try {
+			const data = JSON.parse(resp.body);
+			// Si la estructura de sugerencias trae elementos, los convertimos
+			const suggestions = data.suggestions || data.results || [];
+			suggestions.forEach((s, index) => {
+				const title = typeof s === "string" ? s : (s.value || s.title);
+				if (title) {
+					items.push(new PlatformVideo({
+						id: new PlatformID(PLATFORM, `search_${index}_${Date.now()}`, plugin.config.id),
+						name: title,
+						thumbnails: new Thumbnails([]),
+						author: new PlatformAuthorLink(
+							new PlatformID(PLATFORM, "unknown", plugin.config.id),
+							"OK.ru",
+							BASE_URL,
+							""
+						),
+						datetime: 0,
+						duration: 0,
+						viewCount: 0,
+						url: `${BASE_URL}/video/search?st.query=${encodeURIComponent(title)}`,
+						isLive: false
+					}));
+				}
+			});
+		} catch (e) {
+			// Si falla el parseo de sugerencias, devolvemos vacío de forma controlada sin romper la app
 		}
 	}
 
@@ -100,32 +85,22 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Forzar la URL de incrustación (embed) que es mucho más estable para extraer streams sin bloqueos de sesión completos
+	// Petición al reproductor embebido que contiene la metadata en crudo
 	const embedUrl = `${BASE_URL}/videoembed/${videoId}`;
-	
 	const resp = http.GET(embedUrl, {
 		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
 		"Referer": BASE_URL
 	}, false);
 
 	if (!resp.isOk) {
-		throw new ScriptException(`No se pudo cargar la página del video (HTTP ${resp.code})`);
+		throw new ScriptException(`No se pudo conectar con OK.ru (HTTP ${resp.code})`);
 	}
 
-	let metadata = parseOkRuMetadata(resp.body);
-	
-	// Si falla en el embed, intentamos con la URL original
-	if (!metadata) {
-		const respFull = http.GET(url, {
-			"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-		}, false);
-		if (respFull.isOk) {
-			metadata = parseOkRuMetadata(respFull.body);
-		}
-	}
+	const html = resp.body;
+	const metadata = parseMetadataFromHtml(html);
 
 	if (!metadata) {
-		throw new ScriptException("No se pudo extraer la metadata del video de OK.ru. Estructura cambiada.");
+		throw new ScriptException("OK.ru protege este contenido o cambió el formato del reproductor.");
 	}
 
 	const movie = metadata.movie || {};
@@ -138,7 +113,7 @@ source.getContentDetails = function (url) {
 
 	const videoSources = buildVideoSources(metadata);
 	if (videoSources.length === 0) {
-		throw new ScriptException("No se encontraron URLs de video reproducibles.");
+		throw new ScriptException("El video no cuenta con fuentes de reproducción abiertas.");
 	}
 
 	return new PlatformVideoDetails({
@@ -161,62 +136,60 @@ source.getContentDetails = function (url) {
 	});
 };
 
-function parseOkRuMetadata(html) {
-	let optionsMatch = REGEX_DATA_OPTIONS.exec(html);
-	if (!optionsMatch) {
-		// Búsqueda alternativa de JSON incrustado en variable de reproductor si data-options no está presente
-		const altMatch = /\"metadata"\s*:\s*("[^"]+")/.exec(html);
-		if (altMatch) {
-			try {
-				return JSON.parse(JSON.parse(altMatch[1]));
-			} catch (e) { }
-		}
-		return null;
+function parseMetadataFromHtml(html) {
+	// Método 1: Buscar el bloque data-options estándar
+	const dataOptionsRegex = /data-options="([^"]+)"/i;
+	const match = dataOptionsRegex.exec(html);
+	if (match) {
+		try {
+			const decoded = htmlDecode(match[1]);
+			const jsonOpts = JSON.parse(decoded);
+			const metadataStr = jsonOpts.flashvars?.metadata || jsonOpts.metadata;
+			if (metadataStr) {
+				return JSON.parse(decodeURIComponent(metadataStr));
+			}
+		} catch (e) {}
 	}
 
-	const decodedOptions = htmlDecode(optionsMatch[1]);
-	let options;
-	try {
-		options = JSON.parse(decodedOptions);
-	} catch (e) {
-		return null;
+	// Método 2: Buscar variables incrustadas directamente en scripts de la página (otkPlayerVars / binf)
+	const scriptRegex = /(\{.*ansamble.*\}|dwrap\.context\.player.*?\})/i;
+	// Patrón alternativo genérico para extraer JSON incrustado de videos en OK.ru
+	const altJsonRegex = /player\.setOptions\s*\(\s*(\{.+?\})\s*\)\s*;/i;
+	const altMatch = altJsonRegex.exec(html);
+	if (altMatch) {
+		try {
+			const opts = JSON.parse(altMatch[1]);
+			if (opts.flashvars?.metadata) {
+				return JSON.parse(decodeURIComponent(opts.flashvars.metadata));
+			}
+		} catch (e) {}
 	}
 
-	const flashvars = options.flashvars || options;
-	if (!flashvars || !flashvars.metadata) {
-		return null;
-	}
-
-	let metadataStr = flashvars.metadata;
-	try {
-		metadataStr = decodeURIComponent(metadataStr);
-	} catch (e) { }
-
-	try {
-		return JSON.parse(metadataStr);
-	} catch (e) {
-		return null;
-	}
+	return null;
 }
 
 function buildVideoSources(metadata) {
 	const sources = [];
 
-	(metadata.videos || []).forEach(v => {
-		if (!v.url) return;
-		const dims = qualityNameToDims(v.name);
-		sources.push(new VideoUrlSource({
-			name: v.name || "mp4",
-			url: v.url,
-			width: dims.width,
-			height: dims.height,
-			container: "video/mp4",
-			codec: "h264",
-			bitrate: 0,
-			duration: Math.round(metadata.movie?.duration || 0)
-		}));
-	});
+	// Extraer videos en formato progresivo (MP4)
+	if (metadata.videos && Array.isArray(metadata.videos)) {
+		metadata.videos.forEach(v => {
+			if (!v.url) return;
+			const dims = qualityNameToDims(v.name);
+			sources.push(new VideoUrlSource({
+				name: v.name || "mp4",
+				url: v.url,
+				width: dims.width,
+				height: dims.height,
+				container: "video/mp4",
+				codec: "h264",
+				bitrate: 0,
+				duration: Math.round(metadata.movie?.duration || 0)
+			}));
+		});
+	}
 
+	// Añadir soporte HLS si está disponible
 	if (metadata.hlsManifestUrl) {
 		sources.push(new HLSSource({
 			name: "HLS",
