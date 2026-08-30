@@ -119,69 +119,100 @@ source.search = function (query, type, order, filters) {
         return new VideoPager([], false, {});
     }
 
-    const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
+    try {
+        const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
 
-    const resp = http.GET(searchUrl, {
-        "Referer": "https://ok.ru/video",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
-    }, false);
+        const resp = http.GET(searchUrl, {
+            "Referer": "https://ok.ru/video",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.8"
+        }, false);
 
-    if (!resp.isOk) {
-        throw new ScriptException("No se pudo cargar la búsqueda de OK.ru (status " + resp.code + ")");
+        if (!resp.isOk) {
+            return new VideoPager([debugItem("HTTP status " + resp.code + " al pedir la búsqueda")], false, {});
+        }
+
+        // El HTML viene con el JSON doble-escapado como entidades HTML
+        const html = resp.body
+            .replace(/&amp;quot;/g, '"')
+            .replace(/&amp;amp;/g, "&");
+
+        const hasMarker = html.indexOf('"movie":{"info"') !== -1;
+        const hasLoginWall = html.indexOf("\u041f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d") !== -1;
+
+        const results = [];
+        // Cada resultado trae un bloque "movie":{"info":{...}} con
+        // href, id, provider, title, description, thumbnail y demás.
+        const regex = /"movie":\{"info":\{"href":"([^"]+)","id":"(\d+)","provider":"[^"]*","title":"((?:[^"\\]|\\.)*)","description":"(?:[^"\\]|\\.)*","thumbnail":\{"small":"((?:[^"\\]|\\.)*)"[^}]*\},[^}]*"duration":(\d+)[^}]*"totalViews":(\d+)/g;
+
+        let match;
+        while ((match = regex.exec(html)) !== null) {
+            const videoId = match[2];
+            const title = safeJsonUnescape(match[3]);
+            const thumbUrl = safeJsonUnescape(match[4]).replace(/\\u0026/g, "&");
+            const durationMs = parseInt(match[5], 10) || 0;
+            const viewCount = parseInt(match[6], 10) || 0;
+
+            results.push(new PlatformVideo({
+                id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
+                name: title,
+                thumbnails: new Thumbnails([{ url: thumbUrl, quality: 480 }]),
+                author: new PlatformAuthorLink(
+                    new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
+                    "OK.ru",
+                    "",
+                    ""
+                ),
+                uploadDate: 0,
+                duration: Math.round(durationMs / 1000),
+                viewCount: viewCount,
+                url: "https://ok.ru/video/" + videoId,
+                isLive: false
+            }));
+        }
+
+        if (results.length === 0) {
+            // No matcheó ningún resultado. Devolvemos un ítem "falso" con
+            // la info de diagnóstico en el título, para verla sin depender
+            // de que la app muestre errores de search().
+            return new VideoPager([
+                debugItem(
+                    "DEBUG: sinMatches. len=" + html.length +
+                    " hasMarker=" + hasMarker +
+                    " hasLoginWall=" + hasLoginWall +
+                    " inicio=" + html.substring(0, 150).replace(/\s+/g, " ")
+                )
+            ], false, {});
+        }
+
+        return new VideoPager(results, false, {});
+    } catch (e) {
+        // Cualquier error inesperado también se muestra como resultado,
+        // en vez de perderse silenciosamente.
+        return new VideoPager([debugItem("DEBUG ERROR: " + e)], false, {});
     }
-
-    // El HTML viene con el JSON doble-escapado como entidades HTML
-    const html = resp.body
-        .replace(/&amp;quot;/g, '"')
-        .replace(/&amp;amp;/g, "&");
-
-    // Diagnóstico: si no aparece ni un solo bloque "movie":{"info", algo
-    // cambió en la respuesta (bloqueo por User-Agent, HTML distinto, etc).
-    // Tirar el error acá (con el tamaño de la respuesta) ayuda a distinguir
-    // "0 resultados reales" de "la página vino vacía/distinta".
-    if (html.indexOf('"movie":{"info"') === -1) {
-        throw new ScriptException(
-            "Búsqueda sin resultados reconocibles. Tamaño de respuesta: " +
-            html.length + " caracteres. Contiene 'Присоединяйтесь': " +
-            (html.indexOf("\u041f\u0440\u0438\u0441\u043e\u0435\u0434\u0438\u043d") !== -1)
-        );
-    }
-
-    const results = [];
-    // Cada resultado trae un bloque "movie":{"info":{...}} con
-    // href, id, provider, title, description, thumbnail y demás.
-    const regex = /"movie":\{"info":\{"href":"([^"]+)","id":"(\d+)","provider":"[^"]*","title":"((?:[^"\\]|\\.)*)","description":"(?:[^"\\]|\\.)*","thumbnail":\{"small":"((?:[^"\\]|\\.)*)"[^}]*\},[^}]*"duration":(\d+)[^}]*"totalViews":(\d+)/g;
-
-    let match;
-    while ((match = regex.exec(html)) !== null) {
-        const videoId = match[2];
-        const title = safeJsonUnescape(match[3]);
-        const thumbUrl = safeJsonUnescape(match[4]).replace(/\\u0026/g, "&");
-        const durationMs = parseInt(match[5], 10) || 0;
-        const viewCount = parseInt(match[6], 10) || 0;
-
-        results.push(new PlatformVideo({
-            id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
-            name: title,
-            thumbnails: new Thumbnails([{ url: thumbUrl, quality: 480 }]),
-            author: new PlatformAuthorLink(
-                new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
-                "OK.ru",
-                "",
-                ""
-            ),
-            uploadDate: 0,
-            duration: Math.round(durationMs / 1000),
-            viewCount: viewCount,
-            url: "https://ok.ru/video/" + videoId,
-            isLive: false
-        }));
-    }
-
-    return new VideoPager(results, false, {});
 };
+
+// Ítem "falso" usado solo para mostrar información de diagnóstico como
+// si fuera un resultado de búsqueda (ver notas arriba). Sacar una vez
+// que la búsqueda funcione de forma confiable.
+function debugItem(message) {
+    return new PlatformVideo({
+        id: new PlatformID(PLATFORM_NAME, "debug", PLUGIN_ID),
+        name: message,
+        thumbnails: new Thumbnails([]),
+        author: new PlatformAuthorLink(
+            new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
+            "OK.ru", "", ""
+        ),
+        uploadDate: 0,
+        duration: 0,
+        viewCount: 0,
+        url: "https://ok.ru/video",
+        isLive: false
+    });
+}
 
 // ------------------------------------------------------------
 // Helpers
