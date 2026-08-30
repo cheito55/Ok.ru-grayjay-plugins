@@ -81,8 +81,7 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Construimos directamente las fuentes de video basadas en el CDN oficial de OK.ru (MyCDN)
-	// que es el destino final al que apuntan los reproductores, evitando bloqueos de proxy intermedios.
+	// Enlaces directos universales al CDN de OK.ru para evitar cualquier error 403 de proxy
 	const videoSources = [
 		new VideoUrlSource({
 			name: "hd",
@@ -125,7 +124,6 @@ source.getContentDetails = function (url) {
 		video: new VideoSourceDescriptor(videoSources)
 	});
 };
-
 
 function parseMetadataFromHtml(html) {
 	if (!html) return null;
