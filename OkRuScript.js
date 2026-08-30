@@ -64,7 +64,7 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Consultamos a nuestro servidor puente en Vercel para obtener los datos limpios
+	// Consultamos a nuestro servidor en Vercel para obtener los datos limpios y evitar bloqueos
 	const resp = http.GET(`${BRIDGE_API_URL}?id=${videoId}`, {
 		"Accept": "application/json"
 	}, false);
@@ -119,10 +119,12 @@ source.getContentDetails = function (url) {
 		throw new ScriptException("No se encontraron fuentes de video reproducibles desde el servidor puente.");
 	}
 
+	const thumbsList = thumbnailUrl ? [new Thumbnail(thumbnailUrl, 0)] : [];
+
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
 		name: title,
-		thumbnails: new Thumbnails([thumbnailUrl ? new Thumbnail(thumbnailUrl, 0) : null].filter(Boolean)),
+		thumbnails: new Thumbnails(thumbsList),
 		author: new PlatformAuthorLink(
 			new PlatformID(PLATFORM, "unknown", plugin.config.id),
 			"OK.ru",
@@ -194,7 +196,7 @@ function buildVideoSources(metadata) {
 		sources.push(new HLSSource({
 			name: "HLS",
 			url: metadata.hlsManifestUrl,
-      duration: Math.round(metadata.movie?.duration || 0),
+			duration: Math.round(metadata.movie?.duration || 0),
 			priority: true
 		}));
 	}
@@ -228,10 +230,13 @@ function qualityNameToDims(name) {
 
 function mapSearchResultToPlatformVideo(item) {
 	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
+	const thumbUrl = item.thumbnailUrl || item.poster || "";
+	const thumbsList = thumbUrl ? [new Thumbnail(thumbUrl, 0)] : [];
+
 	return new PlatformVideo({
 		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
 		name: item.title || "",
-		thumbnails: new Thumbnails([new Thumbnail(item.thumbnailUrl || item.poster || "", 0)]),
+		thumbnails: new Thumbnails(thumbsList),
 		author: new PlatformAuthorLink(
 			new PlatformID(PLATFORM, String(item.authorId || ""), plugin.config.id),
 			item.authorName || "OK.ru",
