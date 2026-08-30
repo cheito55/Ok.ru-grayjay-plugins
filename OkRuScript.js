@@ -68,7 +68,12 @@ source.search = function (query, type, order, filters) {
         try {
             data = JSON.parse(resp.body);
         } catch (e) {
-            return new VideoPager([debugItem("Error parseando respuesta JSON")], false, {});
+            // Extraemos los primeros 40 caracteres de lo que respondió OK.ru
+            let snippet = resp.body ? resp.body.substring(0, 40) : "Respuesta vacía";
+            return new VideoPager([
+                debugItem("No es JSON. OK.ru respondió:"),
+                debugItem(snippet)
+            ], false, {});
         }
 
         const items = data.videos || data.items || [];
