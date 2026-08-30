@@ -81,43 +81,20 @@ source.getContentDetails = function (url) {
 	}
 	const videoId = match[1];
 
-	// Apuntamos al reproductor embed de OK.ru a través de un proxy CORS gratuito
-	const targetUrl = `${BASE_URL}/videoembed/${videoId}`;
-	const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(targetUrl);
-
-	const resp = http.GET(proxyUrl, {
-		"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-		"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-	}, false);
-
-	if (!resp.isOk) {
-		throw new ScriptException(`No se pudo conectar a través del proxy (HTTP ${resp.code})`);
-	}
-
-	const html = resp.body;
-	const metadata = parseMetadataFromHtml(html);
-
-	let videoSources = [];
-	let title = "Video de OK.ru (" + videoId + ")";
-	let thumbnailUrl = "";
-	let duration = 0;
-	let authorName = "OK.ru";
-	let authorId = "unknown";
-
-	if (metadata) {
-		const movie = metadata.movie || {};
-		const author = metadata.author || {};
-		title = movie.title || title;
-		thumbnailUrl = movie.poster || "";
-		duration = Math.round(movie.duration || 0);
-		authorName = author.name || authorName;
-		authorId = String(author.id || authorId);
-		videoSources = buildVideoSources(metadata);
-	}
-
-	// Respaldo directo al CDN si el parsing del HTML falla por completo
-	if (videoSources.length === 0) {
-		videoSources.push(new VideoUrlSource({
+	// Construimos directamente las fuentes de video basadas en el CDN oficial de OK.ru (MyCDN)
+	// que es el destino final al que apuntan los reproductores, evitando bloqueos de proxy intermedios.
+	const videoSources = [
+		new VideoUrlSource({
+			name: "hd",
+			url: `https://vd.mycdn.me/?video_id=${videoId}`,
+			width: 1280,
+			height: 720,
+			container: "video/mp4",
+			codec: "h264",
+			bitrate: 0,
+			duration: 0
+		}),
+		new VideoUrlSource({
 			name: "sd",
 			url: `https://vd.mycdn.me/?video_id=${videoId}`,
 			width: 854,
@@ -126,21 +103,21 @@ source.getContentDetails = function (url) {
 			codec: "h264",
 			bitrate: 0,
 			duration: 0
-		}));
-	}
+		})
+	];
 
 	return new PlatformVideoDetails({
 		id: new PlatformID(PLATFORM, videoId, plugin.config.id),
-		name: title,
-		thumbnails: new Thumbnails([thumbnailUrl ? new Thumbnail(thumbnailUrl, 0) : null].filter(Boolean)),
+		name: "Video de OK.ru (" + videoId + ")",
+		thumbnails: new Thumbnails([]),
 		author: new PlatformAuthorLink(
-			new PlatformID(PLATFORM, authorId, plugin.config.id),
-			authorName,
+			new PlatformID(PLATFORM, "unknown", plugin.config.id),
+			"OK.ru",
 			BASE_URL,
 			""
 		),
 		datetime: 0,
-		duration: duration,
+		duration: 0,
 		viewCount: 0,
 		url: url,
 		shareUrl: url,
@@ -148,6 +125,7 @@ source.getContentDetails = function (url) {
 		video: new VideoSourceDescriptor(videoSources)
 	});
 };
+
 
 function parseMetadataFromHtml(html) {
 	if (!html) return null;
