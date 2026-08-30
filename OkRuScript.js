@@ -199,17 +199,14 @@ source.search = function (query, type, order, filters) {
         }
 
         if (results.length === 0) {
-            // No matcheó ningún resultado. Devolvemos un ítem "falso" con
-            // la info de diagnóstico en el título, para verla sin depender
-            // de que la app muestre errores de search().
+            // No matcheó ningún resultado. La pantalla de búsqueda corta los
+            // títulos largos, así que separamos el diagnóstico en varios
+            // ítems cortos en vez de uno solo (que se veía truncado).
+            const shortTitle = (pageTitle || "").substring(0, 40);
             return new VideoPager([
-                debugItem(
-                    "DEBUG: sinMatches. len=" + html.length +
-                    " hasMarker=" + hasMarker +
-                    " hasLoginWall=" + hasLoginWall +
-                    " cookie=" + (cookieHeader ? "si" : "no") +
-                    " title=" + pageTitle
-                )
+                debugItem("1) cookie=" + (cookieHeader ? "SI" : "NO") + " wall=" + hasLoginWall),
+                debugItem("2) title=" + shortTitle),
+                debugItem("3) len=" + html.length + " marker=" + hasMarker)
             ], false, {});
         }
 
