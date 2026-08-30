@@ -39,7 +39,7 @@ if (!match) {
     throw new ScriptException("URL de OK.ru no reconocida: " + url);
 }
 
-const videoId = match[1];
+const videoId = match[2];
 const pageUrl = "https://ok.ru/video/" + videoId;
 
 const resp = http.GET(pageUrl, {
