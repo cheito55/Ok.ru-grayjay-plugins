@@ -122,21 +122,34 @@ function parseOkRuMetadata(html) {
 	}
 
 	const flashvars = options.flashvars || options;
-	if (!flashvars || !flashvars.metadata) {
+	if (!flashvars) {
 		return null;
 	}
 
-	let metadataStr = flashvars.metadata;
-	try {
-		metadataStr = decodeURIComponent(metadataStr);
-	} catch (e) {
+	if (flashvars.metadata) {
+		let metadataStr = flashvars.metadata;
+		try {
+			metadataStr = decodeURIComponent(metadataStr);
+		} catch (e) {
+		}
+		try {
+			return JSON.parse(metadataStr);
+		} catch (e) {
+			return null;
+		}
 	}
 
-	try {
-		return JSON.parse(metadataStr);
-	} catch (e) {
-		return null;
+	if (flashvars.metadataUrl) {
+		const metaResp = http.GET(flashvars.metadataUrl, {}, false);
+		if (!metaResp.isOk) return null;
+		try {
+			return JSON.parse(metaResp.body);
+		} catch (e) {
+			return null;
+		}
 	}
+
+	return null;
 }
 
 function buildVideoSources(metadata) {
@@ -157,10 +170,10 @@ function buildVideoSources(metadata) {
 		}));
 	});
 
-	if (metadata.hlsManifestUrl) {
+	if (metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl) {
 		sources.push(new HLSSource({
 			name: "HLS",
-			url: metadata.hlsManifestUrl,
+			url: metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl,
 			duration: Math.round(metadata.movie?.duration || 0),
 			priority: true
 		}));
