@@ -331,7 +331,7 @@ const seen = {};
 ```
 // Enlaces /video/123456789.
 const videoRegex =
-    /href=(["'])((?:https?:\\/\\/(?:www\\.)?ok\\.ru)?\\/video\\/(\\d+)(?:[^"']*)?)\1/gi;
+    /href=(["'])((https?:\\/\\/(www\\.)?ok\\.ru)?\\/video\\/(\\d+)([^"']*)?)\1/gi;
 
 let match;
 
