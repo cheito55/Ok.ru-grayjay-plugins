@@ -10,24 +10,28 @@
 // IMPORTANTE - revisar antes de usar:
 // - Los nombres exactos de clases (HLSSource, VideoUrlSource,
 //   PlatformVideoDetails, PlatformID, PlatformAuthorLink, Thumbnails,
-//   VideoSourceDescriptor) son los que usan los plugins oficiales de
-//   GrayJay (ej. Odysee). Confirmalos contra ese ejemplo si algo no
-//   carga, porque pueden variar entre versiones de la app.
-// - "PLATFORM" y "config" son inyectados por GrayJay en tiempo de
-//   ejecución del plugin, no hace falta definirlos.
-// - search/getHome no están implementados: este plugin está pensado
-//   solo para reproducir un video de OK.ru a partir de su URL
-//   (pegás el link, no buscás dentro de GrayJay).
+//   VideoSourceDescriptor, VideoPager) son los que usan los plugins
+//   oficiales de GrayJay (ej. Odysee). Si alguna vuelve a tirar
+//   ReferenceError, es la próxima sospechosa.
+// - "PLATFORM" ya no se asume como global: se guarda el id real del
+//   plugin en PLUGIN_ID durante source.enable(conf, ...).
+// - search no está implementado: este plugin está pensado solo para
+//   reproducir un video de OK.ru a partir de su URL (pegás el link,
+//   no buscás dentro de GrayJay).
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
 
+// Guardamos acá el id real del plugin, que llega como parámetro en
+// enable() -- NO existe un global "config" inyectado por GrayJay.
+let PLUGIN_ID = "";
+
 // ------------------------------------------------------------
 // Habilitación del plugin (obligatorio en la mayoría de plugins)
 // ------------------------------------------------------------
 source.enable = function (conf, settings, savedState) {
-    // No requiere login ni estado guardado por ahora.
+    PLUGIN_ID = (conf && conf.id) ? conf.id : "";
 };
 
 // ------------------------------------------------------------
@@ -140,7 +144,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     }
 
     return new PlatformVideoDetails({
-        id: new PlatformID(PLATFORM_NAME, videoId, config.id),
+        id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
         name: movie.title || "Video de OK.ru",
         thumbnails: movie.poster ? new Thumbnails([{ url: movie.poster, quality: 720 }]) : new Thumbnails([]),
         duration: intOrZero(movie.duration),
@@ -148,7 +152,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         url: pageUrl,
         isLive: false,
         author: new PlatformAuthorLink(
-            new PlatformID(PLATFORM_NAME, String(author.id || ""), config.id),
+            new PlatformID(PLATFORM_NAME, String(author.id || ""), PLUGIN_ID),
             author.name || "OK.ru",
             "",
             ""
@@ -172,10 +176,15 @@ function unescapeHtml(str) {
 }
 
 // ------------------------------------------------------------
-// Stubs requeridos por la interfaz de plugin (sin implementar)
+// Stubs requeridos por la interfaz de plugin
 // ------------------------------------------------------------
+// OJO: antes esto tiraba throw, y como GrayJay llama a getHome solo
+// para armar el feed principal, terminaba mostrando el error repetido
+// en la pantalla de inicio. Ahora devuelve una lista vacía en vez de
+// romper: si la clase VideoPager no coincide con la real de GrayJay,
+// este es el próximo lugar a revisar.
 source.getHome = function () {
-    throw new ScriptException("Este plugin no soporta feed de inicio, solo reproducción por URL.");
+    return new VideoPager([], false, {});
 };
 
 source.search = function (query) {
