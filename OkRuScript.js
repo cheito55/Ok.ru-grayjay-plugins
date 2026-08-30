@@ -1,652 +1,192 @@
 // ============================================================
 // Plugin de GrayJay para OK.ru (Odnoklassniki)
 // ============================================================
-// Reproducción por URL + búsqueda de videos.
+// Basado en la lógica de extracción usada por streamlink y yt-dlp:
+// - La página del video trae un atributo data-options="{...}" con
+//   flashvars.metadata (o flashvars.metadataUrl para pedirlo aparte).
+// - Dentro de metadata está movie (título, poster, duración) y
+//   hlsManifestUrl / hlsMasterPlaylistUrl con el link HLS firmado.
 //
-// La reproducción usa data-options -> flashvars -> metadata,
-// con HLS como fuente principal y MP4 como fallback.
-// La búsqueda consulta la página de videos de OK.ru y devuelve
-// resultados como PlatformVideo para que GrayJay pueda mostrarlos.
+// IMPORTANTE - revisar antes de usar:
+// - Los nombres exactos de clases (HLSSource, VideoUrlSource,
+//   PlatformVideoDetails, PlatformID, PlatformAuthorLink, Thumbnails,
+//   VideoSourceDescriptor, VideoPager) son los que usan los plugins
+//   oficiales de GrayJay (ej. Odysee). Si alguna vuelve a tirar
+//   ReferenceError, es la próxima sospechosa.
+// - "PLATFORM" ya no se asume como global: se guarda el id real del
+//   plugin en PLUGIN_ID durante source.enable(conf, ...).
+// - search no está implementado: este plugin está pensado solo para
+//   reproducir un video de OK.ru a partir de su URL (pegás el link,
+//   no buscás dentro de GrayJay).
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
-const REGEX_VIDEO_URL = /ok.ru/(video|videoembed)/(\d+)/i;
+const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
 
+// Guardamos acá el id real del plugin, que llega como parámetro en
+// enable() -- NO existe un global "config" inyectado por GrayJay.
 let PLUGIN_ID = "";
 
 // ------------------------------------------------------------
-// Habilitación
+// Habilitación del plugin (obligatorio en la mayoría de plugins)
 // ------------------------------------------------------------
 source.enable = function (conf, settings, savedState) {
-PLUGIN_ID = (conf && conf.id) ? conf.id : "";
+    PLUGIN_ID = (conf && conf.id) ? conf.id : "";
 };
 
 // ------------------------------------------------------------
-// Detección de URLs
+// Detección de URLs que este plugin puede manejar
 // ------------------------------------------------------------
 source.isContentDetailsUrl = function (url) {
-return REGEX_VIDEO_URL.test(url || "");
+    return REGEX_VIDEO_URL.test(url);
 };
 
 // ------------------------------------------------------------
-// Detalle / reproducción del video
+// Obtención del detalle/reproducción del video
 // ------------------------------------------------------------
 source.getContentDetails = function (url) {
-const match = (url || "").match(REGEX_VIDEO_URL);
-
-```
-if (!match) {
-    throw new ScriptException("URL de OK.ru no reconocida: " + url);
-}
-
-const videoId = match[2];
-const pageUrl = "https://ok.ru/video/" + videoId;
-
-const resp = http.GET(pageUrl, {
-    "Referer": "https://ok.ru/",
-    "User-Agent":
-        "Mozilla/5.0 (Linux; Android 12) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/120.0 Mobile Safari/537.36"
-}, false);
-
-if (!resp.isOk) {
-    throw new ScriptException(
-        "No se pudo cargar la página de OK.ru (status " +
-        resp.code + ")"
-    );
-}
-
-const html = resp.body || "";
-
-const stubError = html.match(
-    /class=["'][^"']*vp_video_stub_txt[^"']*["'][^>]*>([^<]+)</i
-);
-
-if (stubError) {
-    throw new ScriptException(
-        "Video no disponible: " +
-        cleanText(unescapeHtml(stubError[1]))
-    );
-}
-
-const optionsMatch = html.match(/data-options=["']([^"']+)["']/i);
-
-if (!optionsMatch) {
-    throw new ScriptException(
-        "No se encontró data-options en la página de OK.ru (¿cambió el sitio?)"
-    );
-}
-
-const optionsJson = unescapeHtml(optionsMatch[1]);
-let options;
-
-try {
-    options = JSON.parse(optionsJson);
-} catch (e) {
-    throw new ScriptException(
-        "No se pudo parsear data-options: " + e
-    );
-}
-
-const flashvars = options.flashvars || {};
-let metadata;
-
-if (flashvars.metadata) {
-    try {
-        metadata = typeof flashvars.metadata === "string"
-            ? JSON.parse(flashvars.metadata)
-            : flashvars.metadata;
-    } catch (e) {
-        throw new ScriptException(
-            "No se pudo parsear flashvars.metadata: " + e
-        );
+    const match = url.match(REGEX_VIDEO_URL);
+    if (!match) {
+        throw new ScriptException("URL de OK.ru no reconocida: " + url);
     }
-}
-else if (flashvars.metadataUrl) {
-    let metadataUrl;
+    const videoId = match[1];
+    const pageUrl = "https://ok.ru/video/" + videoId;
 
-    try {
-        metadataUrl = decodeURIComponent(flashvars.metadataUrl);
-    } catch (_) {
-        metadataUrl = flashvars.metadataUrl;
-    }
-
-    const metaResp = http.POST(metadataUrl, "", {
-        "Referer": pageUrl,
-        "User-Agent":
-            "Mozilla/5.0 (Linux; Android 12) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/120.0 Mobile Safari/537.36",
-        "Content-Type": "application/x-www-form-urlencoded"
+    const resp = http.GET(pageUrl, {
+        "Referer": "https://ok.ru/"
     }, false);
 
-    if (!metaResp.isOk) {
-        throw new ScriptException(
-            "No se pudo obtener metadataUrl (status " +
-            metaResp.code + ")"
-        );
+    if (!resp.isOk) {
+        throw new ScriptException("No se pudo cargar la página de OK.ru (status " + resp.code + ")");
     }
 
+    const html = resp.body;
+
+    // Chequeo de video no disponible / privado / borrado
+    const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
+    if (stubError) {
+        throw new ScriptException("Video no disponible: " + stubError[1]);
+    }
+
+    // Extraer data-options="{...}"
+    const optionsMatch = html.match(/data-options="([^"]+)"/);
+    if (!optionsMatch) {
+        throw new ScriptException("No se encontró data-options en la página (¿cambió el sitio?)");
+    }
+
+    const optionsJson = unescapeHtml(optionsMatch[1]);
+    let options;
     try {
-        metadata = JSON.parse(metaResp.body);
+        options = JSON.parse(optionsJson);
     } catch (e) {
-        throw new ScriptException(
-            "metadataUrl devolvió JSON inválido: " + e
-        );
+        throw new ScriptException("No se pudo parsear data-options: " + e);
     }
-}
-else {
-    throw new ScriptException(
-        "No se encontró metadata ni metadataUrl en flashvars"
-    );
-}
 
-return buildVideoDetails(videoId, pageUrl, metadata);
-```
+    const flashvars = options.flashvars || {};
+    let metadata;
 
-};
-
-// ------------------------------------------------------------
-// Detalle reproducible
-// ------------------------------------------------------------
-function buildVideoDetails(videoId, pageUrl, metadata) {
-metadata = metadata || {};
-
-```
-const movie = metadata.movie || {};
-const author = metadata.author || {};
-
-const hlsUrl =
-    metadata.hlsManifestUrl ||
-    metadata.hlsMasterPlaylistUrl;
-
-const sources = [];
-
-if (hlsUrl) {
-    sources.push(new HLSSource({
-        name: "HLS",
-        url: hlsUrl,
-        duration: intOrZero(movie.duration)
-    }));
-}
-
-if (Array.isArray(metadata.videos)) {
-    for (const v of metadata.videos) {
-        if (v && v.url) {
-            sources.push(new VideoUrlSource({
-                name: v.name || "mp4",
-                url: v.url,
-                container: "video/mp4"
-            }));
+    if (flashvars.metadata) {
+        metadata = JSON.parse(flashvars.metadata);
+    } else if (flashvars.metadataUrl) {
+        const metadataUrl = decodeURIComponent(flashvars.metadataUrl);
+        const metaResp = http.POST(metadataUrl, "", {
+            "Referer": pageUrl,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }, false);
+        if (!metaResp.isOk) {
+            throw new ScriptException("No se pudo obtener metadataUrl (status " + metaResp.code + ")");
         }
-    }
-}
-
-if (sources.length === 0) {
-    if (metadata.paymentInfo) {
-        throw new ScriptException(
-            "Este video es pago en OK.ru, no se puede reproducir sin comprarlo."
-        );
+        metadata = JSON.parse(metaResp.body);
+    } else {
+        throw new ScriptException("No se encontró metadata ni metadataUrl en flashvars");
     }
 
-    throw new ScriptException(
-        "No se encontró ninguna fuente de video reproducible."
-    );
-}
-
-return new PlatformVideoDetails({
-    id: new PlatformID(
-        PLATFORM_NAME,
-        videoId,
-        PLUGIN_ID
-    ),
-
-    name: movie.title || "Video de OK.ru",
-
-    thumbnails: movie.poster
-        ? new Thumbnails([
-            new Thumbnail(movie.poster, 720)
-        ])
-        : new Thumbnails([]),
-
-    duration: intOrZero(movie.duration),
-    viewCount: 0,
-    url: pageUrl,
-    isLive: false,
-
-    author: new PlatformAuthorLink(
-        new PlatformID(
-            PLATFORM_NAME,
-            String(author.id || ""),
-            PLUGIN_ID
-        ),
-        author.name || "OK.ru",
-        "",
-        ""
-    ),
-
-    video: new VideoSourceDescriptor(sources)
-});
-```
-
-}
-
-// ============================================================
-// BÚSQUEDA DE VIDEOS EN OK.RU
-// ============================================================
-
-source.search = function (
-query,
-type,
-order,
-filters,
-continuationToken
-) {
-
-```
-if (!query || query.trim() === "") {
-    return new OKSearchPager([], false, {
-        query: "",
-        type: type,
-        order: order,
-        filters: filters,
-        continuationToken: null
-    });
-}
-
-query = query.trim();
-
-let pageUrl =
-    "https://ok.ru/video/search" +
-    "?st.cmd=anonymVideo" +
-    "&st.ft=search" +
-    "&st.gsq=" + encodeURIComponent(query) +
-    "&st.m=SEARCH";
-
-// El parámetro de página se usa como fallback para la
-// paginación. La primera búsqueda no lleva st.page.
-if (continuationToken) {
-    pageUrl +=
-        "&st.page=" +
-        encodeURIComponent(String(continuationToken));
-}
-
-const resp = http.GET(pageUrl, {
-    "Referer": "https://ok.ru/",
-    "User-Agent":
-        "Mozilla/5.0 (Linux; Android 12) " +
-        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-        "Chrome/120.0 Mobile Safari/537.36"
-}, false);
-
-if (!resp.isOk) {
-    throw new ScriptException(
-        "No se pudo realizar la búsqueda en OK.ru. HTTP " +
-        resp.code
-    );
-}
-
-const html = resp.body || "";
-const videos = parseSearchResults(html);
-
-// Si OK.ru devuelve menos de 10 resultados, consideramos
-// que no hay otra página.
-const hasMore = videos.length >= 10;
-
-let nextToken = null;
-
-if (hasMore) {
-    const currentPage = continuationToken
-        ? parseInt(continuationToken, 10)
-        : 1;
-
-    nextToken = isNaN(currentPage)
-        ? "2"
-        : String(currentPage + 1);
-}
-
-return new OKSearchPager(
-    videos,
-    hasMore,
-    {
-        query: query,
-        type: type,
-        order: order,
-        filters: filters,
-        continuationToken: nextToken
-    }
-);
-```
-
-};
-
-// ------------------------------------------------------------
-// Parsear resultados del buscador de OK.ru
-// ------------------------------------------------------------
-function parseSearchResults(html) {
-const results = [];
-const seen = {};
-
-```
-// Enlaces /video/123456789.
-const videoRegex =
-    /href=(["'])((https?:\\/\\/(www\\.)?ok\\.ru)?\\/video\\/(\\d+)([^"']*)?)\1/gi;
-
-let match;
-
-while ((match = videoRegex.exec(html)) !== null) {
-    const fullHref = match[2];
-    const videoId = match[3];
-
-    if (!videoId || seen[videoId]) {
-        continue;
-    }
-
-    seen[videoId] = true;
-
-    const videoUrl = fullHref.indexOf("http") === 0
-        ? fullHref
-        : "https://ok.ru" + fullHref;
-
-    // Tomamos el bloque alrededor de la tarjeta para extraer
-    // título, miniatura, duración y autor.
-    const start = Math.max(0, match.index - 3000);
-    const end = Math.min(html.length, match.index + 5000);
-    const block = html.substring(start, end);
-
-    results.push(createSearchVideo(
-        videoId,
-        videoUrl,
-        extractTitleFromBlock(block),
-        extractThumbnailFromBlock(block),
-        extractDurationFromBlock(block),
-        extractViewsFromBlock(block),
-        extractAuthorFromBlock(block)
-    ));
-}
-
-return results;
-```
-
-}
-
-// ------------------------------------------------------------
-// Crear PlatformVideo
-// ------------------------------------------------------------
-function createSearchVideo(
-videoId,
-videoUrl,
-title,
-thumbnail,
-duration,
-views,
-author
-) {
-const thumbs = thumbnail
-? new Thumbnails([
-new Thumbnail(thumbnail, 720)
-])
-: new Thumbnails([]);
-
-```
-const authorId = author && author.id
-    ? String(author.id)
-    : "";
-
-const authorName = author && author.name
-    ? author.name
-    : "OK.ru";
-
-return new PlatformVideo({
-    id: new PlatformID(
-        PLATFORM_NAME,
-        String(videoId),
-        PLUGIN_ID
-    ),
-
-    name: title || "Video de OK.ru",
-    thumbnails: thumbs,
-    duration: duration || 0,
-    viewCount: views || 0,
-    url: videoUrl,
-
-    author: new PlatformAuthorLink(
-        new PlatformID(
-            PLATFORM_NAME,
-            authorId,
-            PLUGIN_ID
-        ),
-        authorName,
-        authorId
-            ? "https://ok.ru/profile/" + authorId
-            : "",
-        ""
-    )
-});
-```
-
-}
-
-// ------------------------------------------------------------
-// Extraer título
-// ------------------------------------------------------------
-function extractTitleFromBlock(block) {
-let m = block.match(
-/(title|aria-label)=(["'])(.*?)(["'])/i
-);
-
-```
-if (m && m[1]) {
-    const title = cleanText(unescapeHtml(m[1]));
-
-    if (title && title.length > 2 && title.length < 500) {
-        return title;
-    }
-}
-
-const patterns = [
-    /<h[1-6][^>]*>([\s\S]*?)<\/h[1-6]>/i,
-    /class=["'][^"']*(video-card|video-card_title|video_name|title)[^"']*["'][^>]*>([\s\S]*?)<\/[^>]+>/i
-];
-
-for (let i = 0; i < patterns.length; i++) {
-    m = block.match(patterns[i]);
-
-    if (m && m[1]) {
-        const title = cleanText(unescapeHtml(m[1]));
-
-        if (title && title.length > 2 && title.length < 500) {
-            return title;
-        }
-    }
-}
-
-return "Video de OK.ru";
-```
-
-}
-
-// ------------------------------------------------------------
-// Extraer miniatura
-// ------------------------------------------------------------
-function extractThumbnailFromBlock(block) {
-let m = block.match(
-/(src|data-src|data-original)=(["'])(https?://[^"']+.(jpg|jpeg|png|webp)[^"']*)(["'])/i
-);
-
-```
-if (m && m[1]) {
-    return unescapeHtml(m[1]);
-}
-
-m = block.match(
-    /(src|data-src|data-original)=(["'])(https?:\/\/([^"']*mycdn\.me|[^"']*okcdn\.ru)[^"']*)(["'])/i
-);
-
-if (m && m[1]) {
-    return unescapeHtml(m[1]);
-}
-
-return "";
-```
-
-}
-
-// ------------------------------------------------------------
-// Extraer duración
-// ------------------------------------------------------------
-function extractDurationFromBlock(block) {
-const m = block.match(
-/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b/
-);
-
-```
-if (!m) {
-    return 0;
-}
-
-const a = parseInt(m[1], 10);
-const b = parseInt(m[2], 10);
-
-if (m[3]) {
-    return a * 3600 + b * 60 + parseInt(m[3], 10);
-}
-
-return a * 60 + b;
-```
-
-}
-
-// ------------------------------------------------------------
-// Extraer visualizaciones
-// ------------------------------------------------------------
-function extractViewsFromBlock(block) {
-const m = block.match(
-/([\d.,\s]+)\s*(views|просмотр|visualizaciones|vistas)/i
-);
-
-```
-if (!m) {
-    return 0;
-}
-
-const value = m[1]
-    .replace(/\s/g, "")
-    .replace(/,/g, "")
-    .replace(/\./g, "");
-
-const n = parseInt(value, 10);
-return isNaN(n) ? 0 : n;
-```
-
-}
-
-// ------------------------------------------------------------
-// Extraer autor
-// ------------------------------------------------------------
-function extractAuthorFromBlock(block) {
-const result = {
-id: "",
-name: "OK.ru"
-};
-
-```
-const profile = block.match(
-    /href=(["'])https?:\/\/(www\.)?ok\.ru\/profile\/(\d+)[^"']*(["'])[^>]*>([\s\S]*?)<\/a>/i
-);
-
-if (profile) {
-    result.id = profile[1];
-    result.name = cleanText(unescapeHtml(profile[2])) || "OK.ru";
-}
-
-return result;
-```
-
-}
-
-// ------------------------------------------------------------
-// Pager de búsqueda
-// ------------------------------------------------------------
-class OKSearchPager extends VideoPager {
-constructor(results, hasMore, context) {
-super(results, hasMore, context);
-}
-
-```
-nextPage() {
-    return source.search(
-        this.context.query,
-        this.context.type,
-        this.context.order,
-        this.context.filters,
-        this.context.continuationToken
-    );
-}
-```
-
-}
-
-// ------------------------------------------------------------
-// Home vacío
-// ------------------------------------------------------------
-source.getHome = function (continuationToken) {
-return new VideoPager([], false, {
-continuationToken: continuationToken || null
-});
-};
-
-// ------------------------------------------------------------
-// Sugerencias
-// ------------------------------------------------------------
-source.searchSuggestions = function (query) {
-if (!query || query.trim() === "") {
-return [];
-}
-
-```
-return [query.trim()];
-```
-
-};
-
-// ------------------------------------------------------------
-// Capacidades de búsqueda
-// ------------------------------------------------------------
-source.getSearchCapabilities = function () {
-return {
-types: [Type.Feed.Mixed],
-sorts: [],
-filters: []
-};
+    return buildVideoDetails(videoId, pageUrl, metadata);
 };
 
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
-function intOrZero(v) {
-const n = parseInt(v, 10);
-return isNaN(n) ? 0 : n;
+function buildVideoDetails(videoId, pageUrl, metadata) {
+    const movie = metadata.movie || {};
+    const author = metadata.author || {};
+
+    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
+
+    const sources = [];
+
+    if (hlsUrl) {
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: hlsUrl,
+            duration: intOrZero(movie.duration)
+        }));
+    }
+
+    // Fallback a mp4 directos si no hay HLS (algunos videos viejos)
+    if (Array.isArray(metadata.videos)) {
+        for (const v of metadata.videos) {
+            if (v && v.url) {
+                sources.push(new VideoUrlSource({
+                    name: v.name || "mp4",
+                    url: v.url,
+                    container: "video/mp4"
+                }));
+            }
+        }
+    }
+
+    if (sources.length === 0) {
+        if (metadata.paymentInfo) {
+            throw new ScriptException("Este video es pago en OK.ru, no se puede reproducir sin comprarlo.");
+        }
+        throw new ScriptException("No se encontró ninguna fuente de video reproducible.");
+    }
+
+    return new PlatformVideoDetails({
+        id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
+        name: movie.title || "Video de OK.ru",
+        thumbnails: movie.poster ? new Thumbnails([{ url: movie.poster, quality: 720 }]) : new Thumbnails([]),
+        duration: intOrZero(movie.duration),
+        viewCount: 0,
+        url: pageUrl,
+        isLive: false,
+        author: new PlatformAuthorLink(
+            new PlatformID(PLATFORM_NAME, String(author.id || ""), PLUGIN_ID),
+            author.name || "OK.ru",
+            "",
+            ""
+        ),
+        video: new VideoSourceDescriptor(sources)
+    });
 }
 
-function cleanText(text) {
-return (text || "")
-.replace(/<[^>]+>/g, " ")
-.replace(/\u002F/g, "/")
-.replace(/\u003A/gi, ":")
-.replace(/\u0026/gi, "&")
-.replace(/\s+/g, " ")
-.trim();
+function intOrZero(v) {
+    const n = parseInt(v, 10);
+    return isNaN(n) ? 0 : n;
 }
 
 function unescapeHtml(str) {
-return (str || "")
-.replace(/"/g, '"')
-.replace(/"/g, '"')
-.replace(/'/g, "'")
-.replace(/'/gi, "'")
-.replace(/&/g, "&")
-.replace(/</g, "<")
-.replace(/>/g, ">");
+    return str
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">");
 }
+
+// ------------------------------------------------------------
+// Stubs requeridos por la interfaz de plugin
+// ------------------------------------------------------------
+// OJO: antes esto tiraba throw, y como GrayJay llama a getHome solo
+// para armar el feed principal, terminaba mostrando el error repetido
+// en la pantalla de inicio. Ahora devuelve una lista vacía en vez de
+// romper: si la clase VideoPager no coincide con la real de GrayJay,
+// este es el próximo lugar a revisar.
+source.getHome = function () {
+    return new VideoPager([], false, {});
+};
+
+source.search = function (query) {
+    throw new ScriptException("Este plugin no soporta búsqueda, pegá directamente la URL del video de OK.ru.");
+};
