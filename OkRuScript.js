@@ -1,20 +1,3 @@
-// ============================================================================
-// Plugin no oficial de OK.ru para GrayJay
-//
-// IMPORTANTE (leer antes de usar):
-// - Esto es un punto de partida funcional, escrito siguiendo la convención de
-//   plugins de GrayJay (misma familia de clases que usan los plugins de
-//   Dailymotion, Rutube, PeerTube, etc. de la comunidad).
-// - NO pude probarlo en vivo contra ok.ru (mi entorno no tiene acceso a
-//   internet), así que los nombres exactos de algunos campos del JSON interno
-//   de ok.ru pueden haber cambiado. Están marcados con "// VERIFICAR" abajo.
-// - Para depurarlo: usá el DevServer de GrayJay (Settings > Developer Settings
-//   > Start Server), cargá este script en la pestaña "Testing" y mirá qué
-//   devuelve getContentDetails() para una URL real de ok.ru. Si algo rompe,
-//   es casi seguro que hay que ajustar el parsing de "flashvars.metadata"
-//   (ver función parseOkRuMetadata).
-// ============================================================================
-
 const PLATFORM = "OkRu";
 const BASE_URL = "https://ok.ru";
 
@@ -23,10 +6,6 @@ const REGEX_DATA_OPTIONS = /id="hook_Block_VideoPlayer"[^>]*data-options="([^"]+
 const REGEX_DATA_OPTIONS_FALLBACK = /data-module="OKVideo\.Player"[^>]*data-options="([^"]+)"/i;
 
 var _settings = {};
-
-// ---------------------------------------------------------------------------
-// Ciclo de vida
-// ---------------------------------------------------------------------------
 
 source.enable = function (conf, settings, savedState) {
 	_settings = settings ?? {};
@@ -37,19 +16,9 @@ source.disable = function () {
 	log("[OK.ru] plugin deshabilitado");
 };
 
-// ---------------------------------------------------------------------------
-// Home (feed inicial) — ok.ru no tiene un "home" público sin login útil,
-// así que lo dejamos vacío. Si querés, se puede rellenar con una categoría
-// fija (por ejemplo "populares") más adelante.
-// ---------------------------------------------------------------------------
-
 source.getHome = function () {
 	return new OkRuVideoPager([], false);
 };
-
-// ---------------------------------------------------------------------------
-// Búsqueda
-// ---------------------------------------------------------------------------
 
 source.getSearchCapabilities = function () {
 	return {
@@ -64,10 +33,6 @@ source.searchSuggestions = function (query) {
 };
 
 source.search = function (query, type, order, filters) {
-	// VERIFICAR: el endpoint de búsqueda web de ok.ru puede requerir cookies
-	// de sesión o un token anti-bot. Si esto falla, la alternativa es scrapear
-	// https://ok.ru/web-search/?st.query=...&st.type=VIDEO directamente y
-	// parsear el HTML en vez de pedir JSON.
 	const url = `${BASE_URL}/web-api/search/video?st.query=${encodeURIComponent(query)}&st.mode=SEARCH&page=1`;
 
 	const resp = http.GET(url, { "Accept": "application/json" }, false);
@@ -85,10 +50,6 @@ source.search = function (query, type, order, filters) {
 	const items = (data.videos || data.items || []).map(mapSearchResultToPlatformVideo);
 	return new OkRuVideoPager(items, false);
 };
-
-// ---------------------------------------------------------------------------
-// Detección y detalle de contenido
-// ---------------------------------------------------------------------------
 
 source.isContentDetailsUrl = function (url) {
 	return REGEX_VIDEO_URL.test(url);
@@ -146,14 +107,6 @@ source.getContentDetails = function (url) {
 	});
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-// Extrae y parsea el JSON de metadata que ok.ru embebe en el HTML del player.
-// Técnica: buscar el atributo data-options del div del reproductor, decodificar
-// entidades HTML, parsear como JSON, y dentro de flashvars.metadata hay OTRO
-// JSON (string, URL-encoded) con la data real de video/audio.
 function parseOkRuMetadata(html) {
 	let optionsMatch = REGEX_DATA_OPTIONS.exec(html) || REGEX_DATA_OPTIONS_FALLBACK.exec(html);
 	if (!optionsMatch) {
@@ -178,7 +131,6 @@ function parseOkRuMetadata(html) {
 	try {
 		metadataStr = decodeURIComponent(metadataStr);
 	} catch (e) {
-		// puede que ya venga sin encodear
 	}
 
 	try {
@@ -188,13 +140,9 @@ function parseOkRuMetadata(html) {
 	}
 }
 
-// A partir del objeto metadata de ok.ru, arma las fuentes reproducibles
-// (mp4 progresivo por calidad + HLS si está disponible).
 function buildVideoSources(metadata) {
 	const sources = [];
 
-	// VERIFICAR: el array de calidades progresivas suele venir en
-	// metadata.videos = [{ name: "mobile"|"lowest"|"low"|"sd"|"hd"|"full"|"quad", url: "..." }, ...]
 	(metadata.videos || []).forEach(v => {
 		if (!v.url) return;
 		const dims = qualityNameToDims(v.name);
@@ -210,7 +158,6 @@ function buildVideoSources(metadata) {
 		}));
 	});
 
-	// VERIFICAR: el manifest HLS suele venir en metadata.hlsManifestUrl
 	if (metadata.hlsManifestUrl) {
 		sources.push(new HLSSource({
 			name: "HLS",
@@ -223,18 +170,11 @@ function buildVideoSources(metadata) {
 	return sources;
 }
 
-// Arma un fragmento del HTML real (recibido en el dispositivo, no bloqueado)
-// para poder ajustar el parsing a ciegas desde afuera. Busca pistas conocidas
-// ("flashvars", "data-options", "videoName", "hlsManifest") y devuelve el
-// contexto alrededor de la primera que encuentre; si no encuentra ninguna,
-// devuelve el arranque del HTML (puede ser útil para detectar un muro de login).
 function buildDiagnosticSnippet(html) {
 	const idx = html.indexOf("flashvars");
 	if (idx === -1) {
 		return `(len=${html.length}) ni siquiera "flashvars" aparece. Inicio del HTML: ...${html.substring(0, 600)}...`;
 	}
-	// Retrocedemos bastante para encontrar el inicio del tag/atributo que
-	// envuelve este JSON (el "<div ... algunAtributo=" del que cuelga).
 	const start = Math.max(0, idx - 700);
 	const end = Math.min(html.length, idx + 60);
 	return `(len=${html.length}) pos=${idx}: ...${html.substring(start, end)}...`;
@@ -254,8 +194,6 @@ function qualityNameToDims(name) {
 }
 
 function mapSearchResultToPlatformVideo(item) {
-	// VERIFICAR: la forma exacta del item de búsqueda (nombres de campos) hay
-	// que confirmarla contra la respuesta real del endpoint search/video.
 	const videoUrl = item.url || `${BASE_URL}/video/${item.id}`;
 	return new PlatformVideo({
 		id: new PlatformID(PLATFORM, String(item.id), plugin.config.id),
@@ -283,10 +221,6 @@ function htmlDecode(str) {
 		.replace(/&gt;/g, ">")
 		.replace(/&#39;/g, "'");
 }
-
-// ---------------------------------------------------------------------------
-// Pager simple (sin paginación real por ahora: devuelve una sola página)
-// ---------------------------------------------------------------------------
 
 class OkRuVideoPager extends VideoPager {
 	constructor(results, hasMore, context) {
