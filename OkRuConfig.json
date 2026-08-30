@@ -7,7 +7,7 @@
 	"sourceUrl": "https://cheito55.github.io/Ok.ru-grayjay-plugins/OkRuConfig.json",
 	"repositoryUrl": "",
 	"scriptUrl": "./OkRuScript.js",
-	"version": 1,
+	"version": 2,
 
 	"iconUrl": "./okru_icon.png",
 
@@ -26,6 +26,9 @@
 		"m.ok.ru",
 		"vd.mycdn.me",
 		"i.mycdn.me",
-		"coub-ok.mycdn.me"
+		"coub-ok.mycdn.me",
+		"corsproxy.io"
+	]
+
 	]
 }
