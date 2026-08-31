@@ -1,4 +1,4 @@
-const source = {};
+var source = {};
 
 source.getHome = function() {
     return new VideoPager([], false);
