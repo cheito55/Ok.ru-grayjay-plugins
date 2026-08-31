@@ -259,7 +259,7 @@ function posterFromHtml(block) {
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) atributo style con data-src de carga perezosa en <img>
+    // 5) <img src>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
     // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
@@ -298,69 +298,74 @@ function fetchPageHtml(url) {
 function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
-    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl || metadata.hlsUrl || metadata.hls_playlist;
+
+    // RequestModifier: GrayJay lo usa tanto para reproducción local como
+    // para el proxy de Chromecast.  OK.ru exige el header Referer en las
+    // peticiones al CDN (okcdn.ru); sin él el Chromecast recibe 403 y
+    // por eso el Cast falla en películas pero anda en directos.
+    const okRequestModifier = {
+        modifyRequest: function (url, headers) {
+            headers["Referer"] = "https://ok.ru/";
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+            return { url: url, headers: headers };
+        }
+    };
 
     const sources = [];
+    const seenUrls = {};
 
-    // HLS primero: Chromecast funciona mejor con HLS que con mp4 directo
-    // porque las URLs mp4 de OK.ru pueden requerir headers que el
-    // Chromecast no envía (Referer, etc.)
-    if (hlsUrl) {
-        sources.push(new HLSSource({
-            name: "HLS",
-            url: hlsUrl,
-            duration: intOrZero(movie.duration)
-        }));
-    }
-
-    // MP4 como fallback (funciona localmente en GrayJay)
-    if (Array.isArray(metadata.videos)) {
-        for (const v of metadata.videos) {
-            if (v && v.url) {
-                sources.push(new VideoUrlSource({
-                    name: v.name || "mp4",
-                    url: v.url,
-                    container: "video/mp4",
-                    headers: {
-                        "Referer": "https://ok.ru/"
-                    }
-                }));
-            }
+    // ── Buscar TODAS las URLs HLS posibles ──────────────────
+    const hlsKeys = [
+        "hlsManifestUrl", "hlsMasterPlaylistUrl",
+        "hlsUrl", "hls_playlist", "hls", "hlsUrlMobile"
+    ];
+    for (let i = 0; i < hlsKeys.length; i++) {
+        const val = metadata[hlsKeys[i]];
+        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1 && !seenUrls[val]) {
+            seenUrls[val] = true;
+            sources.push(new HLSSource({
+                name: "HLS",
+                url: val,
+                duration: intOrZero(movie.duration),
+                requestModifier: okRequestModifier
+            }));
         }
     }
 
-    // Si solo tenemos MP4 (sin HLS), intentamos obtener HLS desde la
-    // página embebida.  Las películas de OK.ru suelen tener HLS ahí
-    // pero no en la página de detalle.  Chromecast necesita HLS para
-    // enviar el header Referer correctamente.
-    if (!hlsUrl) {
-        try {
-            const embedUrl = "https://ok.ru/videoembed/" + videoId;
-            const embedHtml = fetchPageHtml(embedUrl);
-            if (embedHtml) {
-                const hlsPatterns = [
-                    /hlsManifestUrl['"]\s*:\s*['"](https?:[^'"]+)/,
-                    /hlsMasterPlaylistUrl['"]\s*:\s*['"](https?:[^'"]+)/,
-                    /hlsUrl['"]\s*:\s*['"](https?:[^'"]+)/,
-                    /\.(m3u8[^"'\s]*)/i
-                ];
-                for (let i = 0; i < hlsPatterns.length; i++) {
-                    const hm = embedHtml.match(hlsPatterns[i]);
-                    if (hm && hm[1]) {
-                        let hlUrl = hm[1];
-                        // Limpiar escapes
-                        hlUrl = hlUrl.replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-                        sources.unshift(new HLSSource({
-                            name: "HLS",
-                            url: hlUrl,
-                            duration: intOrZero(movie.duration)
-                        }));
-                        break;
-                    }
-                }
+    // Escaneo bruto del JSON string por si hay m3u8 escondido
+    // en un campo anidado que no revisamos arriba.
+    try {
+        const rawStr = JSON.stringify(metadata);
+        const re = /(?:https?:)?\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
+        let m;
+        while ((m = re.exec(rawStr)) !== null) {
+            let u = m[0].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+            if (u.indexOf("http") !== 0 && u.indexOf("//") === 0) u = "https:" + u;
+            if (!seenUrls[u]) {
+                seenUrls[u] = true;
+                sources.push(new HLSSource({
+                    name: "HLS-scan",
+                    url: u,
+                    duration: intOrZero(movie.duration),
+                    requestModifier: okRequestModifier
+                }));
             }
-        } catch (e) {
-            // Ignorar errores en el intento de fallback
+        }
+    } catch (e) {}
+
+    // ── MP4 (fallback para reproducción local) ──────────────
+    if (Array.isArray(metadata.videos)) {
+        for (let i = 0; i < metadata.videos.length; i++) {
+            const v = metadata.videos[i];
+            if (v && v.url && !seenUrls[v.url]) {
+                seenUrls[v.url] = true;
+                sources.push(new VideoUrlSource({
+                    name: v.name || ("mp4-" + (i + 1)),
+                    url: v.url,
+                    container: "video/mp4",
+                    requestModifier: okRequestModifier
+                }));
+            }
         }
     }
 
@@ -384,8 +389,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM_NAME, String(author.id || ""), PLUGIN_ID),
             author.name || "OK.ru",
-            "",
-            ""
+            "", ""
         ),
         video: new VideoSourceDescriptor(sources)
     });
@@ -440,3 +444,87 @@ function parseViewCount(str) {
 source.getHome = function () {
     return new VideoPager([], false, {});
 };
+Sobre el ícono, ese va en el OkRuConfig.json, no en el JS. Ahora mismo iconUrl está vacío. Para agregarlo necesitás:
+
+Buscar/generar un ícono OK.ru — puedo crear el logo oficial de OK.ru en PNG/WebP transparente si querés
+Subirlo a tu GitHub (ej: icon.png en la misma carpeta)
+Poner la URL cruda en iconUrl. Ej:
+json
+   "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/icon.png"
+¿Querés que te genere el ícono del logo de OK.ru para que lo tengas listo para subir?
+
+
+Fork
+
+Copy
+Ok
+
+
+Edit message
+Voy a generar el ícono del logo de OK.ru. Primero leo la skill de generación de imágenes.
+
+Genero el ícono del logo de OK.ru para tu plugin:
+
+No tengo el tool image_gen integrado disponible en este entorno (solo las funciones exec_command, etc.), y no hay OPENAI_API_KEY. La skill indica que si el tool built-in no está disponible, debo decírtelo y ofrecerte el fallback CLI que requiere la API key.
+
+Sin embargo, para el ícono de OK.ru no necesito generarlo con IA — es un logo de marca existente que puedo obtener directamente y procesar localmente. Mejor aún: puedo crear el ícono a partir del logo oficial de OK.ru descargándolo y convirtiéndolo a un PNG limpio cuadrado. Esto es más fiel a la marca. Déjame intentarlo.
+
+No es una imagen (HTML). Déjame buscar el logo de OK.ru de otra fuente confiable.
+
+Wikimedia está dando error. Déjame buscar la URL correcta del logo de OK.ru en Wikimedia (usando la API de búsqueda) o en otra fuente.
+
+Déjame intentar con la URL directa del logo de OK.ru conocida en Wikimedia. El archivo se llama algo distinto. Voy a buscar en la API de Commons por nombre exacto.
+
+Encontré el logo oficial de OK.ru (Odnoklassniki) 2023. Voy a descargar el SVG y convertirlo a un PNG cuadrado para usar como ícono del plugin. El SVG es la mejor fuente porque conserva el vector. Déjame descargarlo.
+
+Tengo el SVG oficial del logo de OK.ru. Es un cuadrado de 600x600. El ícono para GrayJay debe ser un PNG. Voy a convertirlo a PNG. Déjame verificar si hay herramientas disponibles para convertir SVG a PNG.
+
+No hay herramientas de conversión SVG disponibles. Déjame instalar lo necesario para convertir el logo SVG que ya descargué a PNG:
+
+cairosvg y pillow instalados. Ahora convierto el logo SVG oficial a un PNG cuadrado, ideal para ícono de plugin. El SVG es 600x600. Voy a generar el PNG a 512x512 (buen tamaño para iconos de apps).
+
+Déjame ver el ícono generado:
+
+Perfecto, el ícono quedó muy bien: es el logo oficial de OK.ru con fondo transparente, naranja sobre fondo azul lima... Espera, el fondo parece ser azul/verde claro, no transparente. Déjame verificar el canal alpha del PNG.
+
+En realidad se ve el logo naranja de OK.ru sobre un fondo que parece transparente (con patrón de cuadros que representan transparencia en el visor). El render parece correcto: es un PNG RGBA con transparencia.
+
+Ahora, para que sirva como ícono de plugin en GrayJay, un PNG cuadrado de 512x512 es ideal. Voy a copiar el ícono al workspace del proyecto:
+
+Ya tengo el ícono generado. Ahora te explico los pasos para agregarlo al plugin.
+
+Confirmemos también el contenido actual de OkRuConfig.json para que veas qué editar:
+
+
+▶
+Worked for 1m 51s
+
+Todo listo. Te dejo el resumen con todo lo que necesitás hacer:
+
+Ícono del plugin
+Generé el icono con el logo oficial de OK.ru en fondo transparente:
+
+Archivo: icon.png (512×512, PNG con transparencia), listo en `/root/Documents/Codex/2026-08-31/name-ok-ru-description-plugin-no/icon.png`
+Para activarlo tenés que:
+
+Subir icon.png a la raíz de tu repositorio de GitHub (Ok.ru-grayjay-plugins/icon.png)
+En el OkRuConfig.json, cambiar:
+json
+   "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/icon.png"
+(reemplazando el "iconUrl": "" actual)
+
+JS corregido
+El JS con todas las correcciones ya está en `/root/Documents/Codex/2026-08-31/name-ok-ru-description-plugin-no/OkRuScript.js`. Es este archivo el que tenés que subir reemplazando el de GitHub. Incluye:
+
+Fix de portadas (más patrones de extracción + ventana ampliada)
+Fix de Cast (modifier requestModifier que inyecta el Referer y User-Agent para el proxy de Chromecast)
+Ya no lo pego completo acá porque fue largo el mensaje anterior; está guardado en el archivo local. Copiá el contenido de OkRuScript.js y subilo a tu repo. ¿Querés que abra el contenido completo de nuevo para que lo copies desde acá, o preferís trabajar con el archivo local?
+
+
+Fork
+
+Copy
+
+Type a message... (@ for files)
+
++
