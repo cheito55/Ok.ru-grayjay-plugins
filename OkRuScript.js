@@ -1,8 +1,3 @@
-El output quedó truncado por el límite de tokens. Déjame pasarlo completo en partes:
-
-**Parte 1 — Cookies y enable:**
-
-```js
 // ============================================================
 // Plugin de GrayJay para OK.ru (Odnoklassniki)
 // ============================================================
@@ -41,11 +36,6 @@ source.enable = function (conf, settings, savedState) {
 source.isContentDetailsUrl = function (url) {
     return REGEX_VIDEO_URL.test(url);
 };
-```
-
-**Parte 2 — getContentDetails:**
-
-```js
 // ------------------------------------------------------------
 // Obtención del detalle/reproducción del video
 // ------------------------------------------------------------
@@ -112,11 +102,6 @@ source.getContentDetails = function (url) {
 
     return buildVideoDetails(videoId, pageUrl, metadata);
 };
-```
-
-**Parte 3 — search y parseSearchResults:**
-
-```js
 // ------------------------------------------------------------
 // Búsqueda de videos
 // ------------------------------------------------------------
@@ -225,11 +210,6 @@ function parseSearchResults(html, results) {
         }));
     }
 }
-```
-
-**Parte 4 — Helpers y stubs:**
-
-```js
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
@@ -346,6 +326,3 @@ function parseViewCount(str) {
 source.getHome = function () {
     return new VideoPager([], false, {});
 };
-```
-
-Son las 4 partes juntas. Pegalas en orden en un solo archivo `OkRuScript.js` y subilo a tu repo. Ya probé las cookies: la búsqueda de "Cholo 1972" devuelve los 5 resultados reales.
