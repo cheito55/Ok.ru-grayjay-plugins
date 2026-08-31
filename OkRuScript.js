@@ -36,6 +36,7 @@ source.enable = function (conf, settings, savedState) {
 source.isContentDetailsUrl = function (url) {
     return REGEX_VIDEO_URL.test(url);
 };
+
 // ------------------------------------------------------------
 // Obtención del detalle/reproducción del video
 // ------------------------------------------------------------
@@ -102,9 +103,12 @@ source.getContentDetails = function (url) {
 
     return buildVideoDetails(videoId, pageUrl, metadata);
 };
+
 // ------------------------------------------------------------
 // Búsqueda de videos
 // ------------------------------------------------------------
+// Usa st.cmd=searchResult que EXIGE sesión logueada.
+// Intenta: 1) cookies manuales, 2) cookies de GrayJay (useAuth).
 source.search = function (query, type, order, filters) {
     if (!query) {
         return new VideoPager([], false, {});
@@ -160,7 +164,15 @@ source.search = function (query, type, order, filters) {
 // ------------------------------------------------------------
 // Parseo de resultados de búsqueda
 // ------------------------------------------------------------
+// Los resultados autenticados usan la estructura HTML:
+//   - data-movie-id="ID"
+//   - portal_search_name title="TITULO"
+//   - video-card_duration > DURACION
+//   - portal_search_info-i > VISTAS
+//   - data-poster-src="URL_POSTER"
+// ------------------------------------------------------------
 function parseSearchResults(html, results) {
+    // Buscamos IDs únicos de video en la página
     const seen = {};
     const movieIdRegex = /data-movie-id="(\d+)"/g;
     let idMatch;
@@ -170,25 +182,48 @@ function parseSearchResults(html, results) {
         if (seen[videoId]) continue;
         seen[videoId] = true;
 
-        const searchStart = Math.max(0, idMatch.index - 1500);
-        const searchEnd = Math.min(idMatch.index + 5000, html.length);
+        // Buscamos contexto alrededor de este video.
+        // data-poster-src / portada aparece ANTES de data-movie-id en el HTML.
+        // Usamos una ventana amplia para cubrir las tarjetas de película,
+        // que pueden tener mucho HTML entre la portada y el id del video.
+        const searchStart = Math.max(0, idMatch.index - 3000);
+        const searchEnd = Math.min(idMatch.index + 8000, html.length);
         const block = html.substring(searchStart, searchEnd);
 
+        // Título: portal_search_name con title=""
         const titleMatch = block.match(/portal_search_name"[^>]*title="([^"]+)"/);
         const title = titleMatch
             ? unescapeHtml(titleMatch[1])
             : "Video de OK.ru";
 
+        // Duración: video-card_duration
         const durMatch = block.match(/video-card_duration"[^>]*>([^<]+)/);
         const durStr = durMatch ? durMatch[1].trim() : "0:00";
         const durationSec = parseDuration(durStr);
 
+        // Vistas: portal_search_info-i
         const viewsMatch = block.match(/portal_search_info-i">([^<]+)/);
         const viewsStr = viewsMatch ? viewsMatch[1].trim() : "0";
         const viewCount = parseViewCount(viewsStr);
 
-        const posterMatch = block.match(/poster-src="([^"]+)"/);
-        const posterUrl = posterMatch ? posterMatch[1] : "";
+        // Poster: OK.ru usa estructuras HTML distintas según el tipo de
+        // tarjeta (película, clip, perfil, etc.). Probamos TODOS los
+        // patrones conocidos, incluidas las cargas perezosas (lazy-load)
+        // y el JSON en data-options de las tarjetas de película.
+        let posterUrl = posterFromHtml(block);
+        if (!posterUrl) {
+            // Último recurso: busco cualquier URL de imagen de okcdn.net/ru
+            // dentro del bloque que parezca una portada.
+            const anyImg = block.match(
+                /(?:https?:)?\/\/[^'"\s]+(?:okcdn\.(?:ru|net)|userapi\.com)[^'"\s]*\.(?:jpe?g|png|webp)/i
+            );
+            if (anyImg) {
+                posterUrl = anyImg[0];
+                if (posterUrl.indexOf("http") !== 0 && posterUrl.indexOf("//") === 0) {
+                    posterUrl = "https:" + posterUrl;
+                }
+            }
+        }
 
         results.push(new PlatformVideo({
             id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
@@ -210,9 +245,44 @@ function parseSearchResults(html, results) {
         }));
     }
 }
+
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+function posterFromHtml(block) {
+    // 1) data-poster-src (clips)
+    let m = block.match(/data-poster-src="([^"]+)"/);
+    // 2) data-poster-url (películas en algunas versiones)
+    if (!m) m = block.match(/data-poster-url="([^"]+)"/);
+    // 3) poster-src genérico
+    if (!m) m = block.match(/poster-src="([^"]+)"/);
+    // 4) style con background-image
+    if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
+    // 5) atributo style con data-src de carga perezosa en <img>
+    if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
+    // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
+    if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
+    // 7) data-src genérico (componentes lazy de OK.ru)
+    if (!m) m = block.match(/data-src="([^"]+)"/);
+
+    if (!m) return "";
+
+    let url = m[1];
+    // Limpiar posibles prefijos de esquema o entidades escapadas
+    url = url.replace(/&amp;/g, "&");
+    // Algunas URLs vienen sin esquema (ej: //iv.okcdn.ru/...)
+    if (url.indexOf("http") !== 0 && url.indexOf("//") === 0) {
+        url = "https:" + url;
+    }
+    // Descartar íconos pequeños / marcadores que no sean imágenes
+    // (logos, avatares genéricos). Las portadas reales siempre vienen
+    // del CDN de OK (okcdn.ru / okcdn.net / userapi.com).
+    if (!/(?:okcdn|userapi\.com)/.test(url)) {
+        return "";
+    }
+    return url;
+}
 
 function fetchPageHtml(url) {
     try {
@@ -228,10 +298,13 @@ function fetchPageHtml(url) {
 function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
-    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
+    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl || metadata.hlsUrl || metadata.hls_playlist;
 
     const sources = [];
 
+    // HLS primero: Chromecast funciona mejor con HLS que con mp4 directo
+    // porque las URLs mp4 de OK.ru pueden requerir headers que el
+    // Chromecast no envía (Referer, etc.)
     if (hlsUrl) {
         sources.push(new HLSSource({
             name: "HLS",
@@ -247,9 +320,47 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 sources.push(new VideoUrlSource({
                     name: v.name || "mp4",
                     url: v.url,
-                    container: "video/mp4"
+                    container: "video/mp4",
+                    headers: {
+                        "Referer": "https://ok.ru/"
+                    }
                 }));
             }
+        }
+    }
+
+    // Si solo tenemos MP4 (sin HLS), intentamos obtener HLS desde la
+    // página embebida.  Las películas de OK.ru suelen tener HLS ahí
+    // pero no en la página de detalle.  Chromecast necesita HLS para
+    // enviar el header Referer correctamente.
+    if (!hlsUrl) {
+        try {
+            const embedUrl = "https://ok.ru/videoembed/" + videoId;
+            const embedHtml = fetchPageHtml(embedUrl);
+            if (embedHtml) {
+                const hlsPatterns = [
+                    /hlsManifestUrl['"]\s*:\s*['"](https?:[^'"]+)/,
+                    /hlsMasterPlaylistUrl['"]\s*:\s*['"](https?:[^'"]+)/,
+                    /hlsUrl['"]\s*:\s*['"](https?:[^'"]+)/,
+                    /\.(m3u8[^"'\s]*)/i
+                ];
+                for (let i = 0; i < hlsPatterns.length; i++) {
+                    const hm = embedHtml.match(hlsPatterns[i]);
+                    if (hm && hm[1]) {
+                        let hlUrl = hm[1];
+                        // Limpiar escapes
+                        hlUrl = hlUrl.replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+                        sources.unshift(new HLSSource({
+                            name: "HLS",
+                            url: hlUrl,
+                            duration: intOrZero(movie.duration)
+                        }));
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            // Ignorar errores en el intento de fallback
         }
     }
 
@@ -302,6 +413,7 @@ function safeJsonUnescape(fragment) {
     }
 }
 
+// Parsea duraciones como "02:58" o "1:35:02" a segundos
 function parseDuration(str) {
     const parts = str.split(":").map(Number);
     if (parts.length === 3) {
@@ -312,6 +424,7 @@ function parseDuration(str) {
     return 0;
 }
 
+// Parsea strings como "910 views" o "72 771 просмотров" a número
 function parseViewCount(str) {
     const cleaned = str
         .replace(/&nbsp;/g, "")
