@@ -28,6 +28,10 @@
 // - Si el usuario nunca inició sesión desde GrayJay (Sources > este
 //   plugin > Login), la búsqueda va a seguir fallando -- eso es
 //   esperado, no es un bug del script.
+// - FIX: en la versión móvil (m.ok.ru), flashvars.metadata viene ya
+//   como OBJETO, no como string JSON (a diferencia de la versión de
+//   escritorio). Por eso getContentDetails ahora chequea el tipo
+//   antes de decidir si hace falta JSON.parse o no.
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
@@ -106,7 +110,15 @@ source.getContentDetails = function (url) {
     let metadata;
 
     if (flashvars.metadata) {
-        metadata = JSON.parse(flashvars.metadata);
+        // FIX: en desktop, flashvars.metadata es un STRING que hay que
+        // parsear. En mobile (m.ok.ru), puede venir ya como OBJETO --
+        // si le hacemos JSON.parse a un objeto, JS lo convierte antes a
+        // texto con toString(), da "[object Object]", y explota con
+        // "SyntaxError: '[object Object]' is not valid JSON". Por eso
+        // chequeamos el tipo antes de decidir si parsear o no.
+        metadata = (typeof flashvars.metadata === "string")
+            ? JSON.parse(flashvars.metadata)
+            : flashvars.metadata;
     } else if (flashvars.metadataUrl) {
         const metadataUrl = decodeURIComponent(flashvars.metadataUrl);
         const metaResp = http.POST(metadataUrl, "", {
@@ -116,7 +128,10 @@ source.getContentDetails = function (url) {
         if (!metaResp.isOk) {
             throw new ScriptException("No se pudo obtener metadataUrl (status " + metaResp.code + ")");
         }
-        metadata = JSON.parse(metaResp.body);
+        // Mismo cuidado acá: por si el body ya viniera parseado.
+        metadata = (typeof metaResp.body === "string")
+            ? JSON.parse(metaResp.body)
+            : metaResp.body;
     } else {
         throw new ScriptException("No se encontró metadata ni metadataUrl en flashvars");
     }
