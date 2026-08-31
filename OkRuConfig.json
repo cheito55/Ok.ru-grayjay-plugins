@@ -1,13 +1,12 @@
 {
-    "id": "com.github.okru",
+    "id": "com.cheito55.okru",
     "name": "Ok.ru",
     "description": "Video plugin para OK.ru",
-    "author": "Tu Nombre",
+    "author": "cheito55",
     "version": "1.0.0",
     "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/e/e0/Odnoklassniki_Logo.png",
     "providerVersion": 1,
-    "sourceUrl": "https://github.com/TU_USUARIO/okru-grayjay",
-    "scriptUrl": "https://raw.githubusercontent.com/TU_USUARIO/okru-grayjay/main/OkRu.js",
+    "scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript.js",
     "allowEval": false,
     "allowUrls": [
         "ok.ru",
