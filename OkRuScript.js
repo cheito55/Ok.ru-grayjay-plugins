@@ -217,20 +217,20 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const author = metadata.author || {};
 
     const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
-
     const sources = [];
 
-    // NOTA: se probó poner los mp4 primero pensando que ayudarían al
-    // cast por Chromecast (menos peticiones que HLS), pero en la
-    // práctica fallaron más rápido, no mejor -- indicio de que el
-    // link firmado de OK.ru se rechaza igual sin importar el formato.
-    // Se vuelve al orden original (HLS primero), que es el que mejor
-    // funcionó para reproducción normal en el celular.
+    // Creamos los encabezados para burlar el bloqueo del CDN en el Chromecast
+    const castHeaders = {
+        "Referer": pageUrl,
+        "Origin": "https://ok.ru"
+    };
+
     if (hlsUrl) {
         sources.push(new HLSSource({
             name: "HLS",
             url: hlsUrl,
-            duration: intOrZero(movie.duration)
+            duration: intOrZero(movie.duration),
+            headers: castHeaders // <-- Inyectamos los headers aquí
         }));
     }
 
@@ -240,7 +240,8 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 sources.push(new VideoUrlSource({
                     name: v.name || "mp4",
                     url: v.url,
-                    container: "video/mp4"
+                    container: "video/mp4",
+                    headers: castHeaders // <-- Inyectamos los headers aquí
                 }));
             }
         }
@@ -270,6 +271,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         video: new VideoSourceDescriptor(sources)
     });
 }
+
 
 function intOrZero(v) {
     const n = parseInt(v, 10);
