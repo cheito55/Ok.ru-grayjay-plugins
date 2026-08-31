@@ -216,35 +216,43 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
-    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
     const sources = [];
 
-    // Creamos los encabezados para burlar el bloqueo del CDN en el Chromecast
+    // Agregamos User-Agent para engañar a la seguridad de OK.ru en el Chromecast
     const castHeaders = {
         "Referer": pageUrl,
-        "Origin": "https://ok.ru"
+        "Origin": "https://ok.ru",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
     };
 
-    if (hlsUrl) {
-        sources.push(new HLSSource({
-            name: "HLS",
-            url: hlsUrl,
-            duration: intOrZero(movie.duration),
-            headers: castHeaders // <-- Inyectamos los headers aquí
-        }));
-    }
-
+    // 1. PRIORIDAD CHROMECAST: Extraemos los MP4 primero.
+    // Al ser un solo archivo, el Chromecast no pierde los encabezados.
     if (Array.isArray(metadata.videos)) {
-        for (const v of metadata.videos) {
+        // OK.ru suele traer calidades como "mobile", "lowest", "low", "sd", "hd"
+        // Los invertimos para que GrayJay agarre la mejor calidad por defecto
+        const videosInvertidos = metadata.videos.reverse();
+        
+        for (const v of videosInvertidos) {
             if (v && v.url) {
                 sources.push(new VideoUrlSource({
                     name: v.name || "mp4",
                     url: v.url,
                     container: "video/mp4",
-                    headers: castHeaders // <-- Inyectamos los headers aquí
+                    headers: castHeaders
                 }));
             }
         }
+    }
+
+    // 2. RESPALDO: Dejamos HLS solo si por alguna razón no hay MP4
+    const hlsUrl = metadata.hlsManifestUrl || metadata.hlsMasterPlaylistUrl;
+    if (hlsUrl && sources.length === 0) {
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: hlsUrl,
+            duration: intOrZero(movie.duration),
+            headers: castHeaders
+        }));
     }
 
     if (sources.length === 0) {
@@ -261,7 +269,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         duration: intOrZero(movie.duration),
         viewCount: 0,
         url: pageUrl,
-        isLive: false,
+        isLive: false, // Nota: Las transmisiones en vivo reales usarán otro método si es necesario
         author: new PlatformAuthorLink(
             new PlatformID(PLATFORM_NAME, String(author.id || ""), PLUGIN_ID),
             author.name || "OK.ru",
@@ -271,6 +279,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         video: new VideoSourceDescriptor(sources)
     });
 }
+
 
 
 function intOrZero(v) {
