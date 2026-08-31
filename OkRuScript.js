@@ -299,13 +299,25 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
+    // RequestModifier: GrayJay lo usa tanto para la reproducción local
+    // como para el proxy de Chromecast.  OK.ru exige el header Referer
+    // en las peticiones al CDN (okcdn.ru).
+    // IMPORTANTE: modifyRequest recibe (url, headers) y debe devolver
+    // { url, headers, options } sin mutar el Map original de headers.
+    const okRequestModifier = {
+        modifyRequest: function(url, headers) {
+            return {
+                url: url,
+                headers: { "Referer": "https://ok.ru/" },
+                options: { applyOtherHeaders: true }
+            };
+        }
+    };
+
     const sources = [];
     const seenUrls = {};
 
     // ── HLS primero (mejor para Cast) ────────────────────────
-    // Buscamos el m3u8 en todos los campos conocidos de la metadata,
-    // y también hacemos un escaneo bruto del JSON por si hay una URL
-    // escondida en un campo anidado.
     const hlsCandidates = [];
     const hlsKeys = [
         "hlsManifestUrl", "hlsMasterPlaylistUrl",
@@ -339,7 +351,8 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         sources.push(new HLSSource({
             name: "HLS",
             url: u,
-            duration: intOrZero(movie.duration)
+            duration: intOrZero(movie.duration),
+            requestModifier: okRequestModifier
         }));
     }
 
@@ -352,7 +365,8 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 sources.push(new VideoUrlSource({
                     name: v.name || ("mp4-" + (i + 1)),
                     url: v.url,
-                    container: "video/mp4"
+                    container: "video/mp4",
+                    requestModifier: okRequestModifier
                 }));
             }
         }
