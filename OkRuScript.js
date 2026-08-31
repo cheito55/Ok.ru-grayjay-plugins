@@ -170,8 +170,8 @@ function parseSearchResults(html, results) {
         if (seen[videoId]) continue;
         seen[videoId] = true;
 
-        const searchStart = idMatch.index;
-        const searchEnd = Math.min(searchStart + 5000, html.length);
+        const searchStart = Math.max(0, idMatch.index - 1500);
+        const searchEnd = Math.min(idMatch.index + 5000, html.length);
         const block = html.substring(searchStart, searchEnd);
 
         const titleMatch = block.match(/portal_search_name"[^>]*title="([^"]+)"/);
@@ -240,6 +240,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         }));
     }
 
+    // MP4 como fallback (funciona localmente en GrayJay)
     if (Array.isArray(metadata.videos)) {
         for (const v of metadata.videos) {
             if (v && v.url) {
