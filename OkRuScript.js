@@ -259,7 +259,7 @@ function posterFromHtml(block) {
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) <img src>
+    // 5) atributo style con data-src de carga perezosa en <img>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
     // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
@@ -299,41 +299,24 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
-    // RequestModifier: GrayJay lo usa tanto para reproducción local como
-    // para el proxy de Chromecast.  OK.ru exige el header Referer en las
-    // peticiones al CDN (okcdn.ru); sin él el Chromecast recibe 403 y
-    // por eso el Cast falla en películas pero anda en directos.
-    const okRequestModifier = {
-        modifyRequest: function (url, headers) {
-            headers["Referer"] = "https://ok.ru/";
-            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-            return { url: url, headers: headers };
-        }
-    };
-
     const sources = [];
     const seenUrls = {};
 
-    // ── Buscar TODAS las URLs HLS posibles ──────────────────
+    // ── HLS primero (mejor para Cast) ────────────────────────
+    // Buscamos el m3u8 en todos los campos conocidos de la metadata,
+    // y también hacemos un escaneo bruto del JSON por si hay una URL
+    // escondida en un campo anidado.
+    const hlsCandidates = [];
     const hlsKeys = [
         "hlsManifestUrl", "hlsMasterPlaylistUrl",
         "hlsUrl", "hls_playlist", "hls", "hlsUrlMobile"
     ];
     for (let i = 0; i < hlsKeys.length; i++) {
         const val = metadata[hlsKeys[i]];
-        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1 && !seenUrls[val]) {
-            seenUrls[val] = true;
-            sources.push(new HLSSource({
-                name: "HLS",
-                url: val,
-                duration: intOrZero(movie.duration),
-                requestModifier: okRequestModifier
-            }));
+        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1) {
+            hlsCandidates.push(val);
         }
     }
-
-    // Escaneo bruto del JSON string por si hay m3u8 escondido
-    // en un campo anidado que no revisamos arriba.
     try {
         const rawStr = JSON.stringify(metadata);
         const re = /(?:https?:)?\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
@@ -341,17 +324,24 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         while ((m = re.exec(rawStr)) !== null) {
             let u = m[0].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
             if (u.indexOf("http") !== 0 && u.indexOf("//") === 0) u = "https:" + u;
-            if (!seenUrls[u]) {
-                seenUrls[u] = true;
-                sources.push(new HLSSource({
-                    name: "HLS-scan",
-                    url: u,
-                    duration: intOrZero(movie.duration),
-                    requestModifier: okRequestModifier
-                }));
+            let dup = false;
+            for (let j = 0; j < hlsCandidates.length; j++) {
+                if (hlsCandidates[j] === u) { dup = true; break; }
             }
+            if (!dup) hlsCandidates.push(u);
         }
     } catch (e) {}
+
+    for (let i = 0; i < hlsCandidates.length; i++) {
+        const u = hlsCandidates[i];
+        if (seenUrls[u]) continue;
+        seenUrls[u] = true;
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: u,
+            duration: intOrZero(movie.duration)
+        }));
+    }
 
     // ── MP4 (fallback para reproducción local) ──────────────
     if (Array.isArray(metadata.videos)) {
@@ -362,8 +352,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 sources.push(new VideoUrlSource({
                     name: v.name || ("mp4-" + (i + 1)),
                     url: v.url,
-                    container: "video/mp4",
-                    requestModifier: okRequestModifier
+                    container: "video/mp4"
                 }));
             }
         }
