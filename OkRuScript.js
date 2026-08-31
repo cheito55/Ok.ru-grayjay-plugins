@@ -259,7 +259,7 @@ function posterFromHtml(block) {
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) <img src>
+    // 5) atributo style con data-src de carga perezosa en <img>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
     // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
@@ -444,87 +444,3 @@ function parseViewCount(str) {
 source.getHome = function () {
     return new VideoPager([], false, {});
 };
-Sobre el ícono, ese va en el OkRuConfig.json, no en el JS. Ahora mismo iconUrl está vacío. Para agregarlo necesitás:
-
-Buscar/generar un ícono OK.ru — puedo crear el logo oficial de OK.ru en PNG/WebP transparente si querés
-Subirlo a tu GitHub (ej: icon.png en la misma carpeta)
-Poner la URL cruda en iconUrl. Ej:
-json
-   "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/icon.png"
-¿Querés que te genere el ícono del logo de OK.ru para que lo tengas listo para subir?
-
-
-Fork
-
-Copy
-Ok
-
-
-Edit message
-Voy a generar el ícono del logo de OK.ru. Primero leo la skill de generación de imágenes.
-
-Genero el ícono del logo de OK.ru para tu plugin:
-
-No tengo el tool image_gen integrado disponible en este entorno (solo las funciones exec_command, etc.), y no hay OPENAI_API_KEY. La skill indica que si el tool built-in no está disponible, debo decírtelo y ofrecerte el fallback CLI que requiere la API key.
-
-Sin embargo, para el ícono de OK.ru no necesito generarlo con IA — es un logo de marca existente que puedo obtener directamente y procesar localmente. Mejor aún: puedo crear el ícono a partir del logo oficial de OK.ru descargándolo y convirtiéndolo a un PNG limpio cuadrado. Esto es más fiel a la marca. Déjame intentarlo.
-
-No es una imagen (HTML). Déjame buscar el logo de OK.ru de otra fuente confiable.
-
-Wikimedia está dando error. Déjame buscar la URL correcta del logo de OK.ru en Wikimedia (usando la API de búsqueda) o en otra fuente.
-
-Déjame intentar con la URL directa del logo de OK.ru conocida en Wikimedia. El archivo se llama algo distinto. Voy a buscar en la API de Commons por nombre exacto.
-
-Encontré el logo oficial de OK.ru (Odnoklassniki) 2023. Voy a descargar el SVG y convertirlo a un PNG cuadrado para usar como ícono del plugin. El SVG es la mejor fuente porque conserva el vector. Déjame descargarlo.
-
-Tengo el SVG oficial del logo de OK.ru. Es un cuadrado de 600x600. El ícono para GrayJay debe ser un PNG. Voy a convertirlo a PNG. Déjame verificar si hay herramientas disponibles para convertir SVG a PNG.
-
-No hay herramientas de conversión SVG disponibles. Déjame instalar lo necesario para convertir el logo SVG que ya descargué a PNG:
-
-cairosvg y pillow instalados. Ahora convierto el logo SVG oficial a un PNG cuadrado, ideal para ícono de plugin. El SVG es 600x600. Voy a generar el PNG a 512x512 (buen tamaño para iconos de apps).
-
-Déjame ver el ícono generado:
-
-Perfecto, el ícono quedó muy bien: es el logo oficial de OK.ru con fondo transparente, naranja sobre fondo azul lima... Espera, el fondo parece ser azul/verde claro, no transparente. Déjame verificar el canal alpha del PNG.
-
-En realidad se ve el logo naranja de OK.ru sobre un fondo que parece transparente (con patrón de cuadros que representan transparencia en el visor). El render parece correcto: es un PNG RGBA con transparencia.
-
-Ahora, para que sirva como ícono de plugin en GrayJay, un PNG cuadrado de 512x512 es ideal. Voy a copiar el ícono al workspace del proyecto:
-
-Ya tengo el ícono generado. Ahora te explico los pasos para agregarlo al plugin.
-
-Confirmemos también el contenido actual de OkRuConfig.json para que veas qué editar:
-
-
-▶
-Worked for 1m 51s
-
-Todo listo. Te dejo el resumen con todo lo que necesitás hacer:
-
-Ícono del plugin
-Generé el icono con el logo oficial de OK.ru en fondo transparente:
-
-Archivo: icon.png (512×512, PNG con transparencia), listo en `/root/Documents/Codex/2026-08-31/name-ok-ru-description-plugin-no/icon.png`
-Para activarlo tenés que:
-
-Subir icon.png a la raíz de tu repositorio de GitHub (Ok.ru-grayjay-plugins/icon.png)
-En el OkRuConfig.json, cambiar:
-json
-   "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/icon.png"
-(reemplazando el "iconUrl": "" actual)
-
-JS corregido
-El JS con todas las correcciones ya está en `/root/Documents/Codex/2026-08-31/name-ok-ru-description-plugin-no/OkRuScript.js`. Es este archivo el que tenés que subir reemplazando el de GitHub. Incluye:
-
-Fix de portadas (más patrones de extracción + ventana ampliada)
-Fix de Cast (modifier requestModifier que inyecta el Referer y User-Agent para el proxy de Chromecast)
-Ya no lo pego completo acá porque fue largo el mensaje anterior; está guardado en el archivo local. Copiá el contenido de OkRuScript.js y subilo a tu repo. ¿Querés que abra el contenido completo de nuevo para que lo copies desde acá, o preferís trabajar con el archivo local?
-
-
-Fork
-
-Copy
-
-Type a message... (@ for files)
-
-+
