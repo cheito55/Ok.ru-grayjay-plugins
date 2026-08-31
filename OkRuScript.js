@@ -64,17 +64,25 @@ source.getContentDetails = function (url) {
         throw new ScriptException("URL de OK.ru no reconocida: " + url);
     }
     const videoId = match[1];
+    // pageUrl (desktop) es la que se guarda en los resultados/detalles;
+    // pero para el fetch en sí probamos primero la versión móvil, que
+    // es bastante más liviana y baja más rápido.
     const pageUrl = "https://ok.ru/video/" + videoId;
+    const mobileUrl = "https://m.ok.ru/video/" + videoId;
 
-    const resp = http.GET(pageUrl, {
-        "Referer": "https://ok.ru/"
-    }, false);
+    let html = fetchPageHtml(mobileUrl);
+    let optionsMatch = html ? html.match(/data-options="([^"]+)"/) : null;
 
-    if (!resp.isOk) {
-        throw new ScriptException("No se pudo cargar la página de OK.ru (status " + resp.code + ")");
+    // Si la versión móvil no trajo data-options (estructura distinta,
+    // bloqueo, lo que sea), caemos a la de escritorio de toda la vida.
+    if (!optionsMatch) {
+        html = fetchPageHtml(pageUrl);
+        optionsMatch = html ? html.match(/data-options="([^"]+)"/) : null;
     }
 
-    const html = resp.body;
+    if (!html) {
+        throw new ScriptException("No se pudo cargar la página de OK.ru");
+    }
 
     // Chequeo de video no disponible / privado / borrado
     const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
@@ -82,8 +90,6 @@ source.getContentDetails = function (url) {
         throw new ScriptException("Video no disponible: " + stubError[1]);
     }
 
-    // Extraer data-options="{...}"
-    const optionsMatch = html.match(/data-options="([^"]+)"/);
     if (!optionsMatch) {
         throw new ScriptException("No se encontró data-options en la página (¿cambió el sitio?)");
     }
@@ -191,6 +197,21 @@ source.search = function (query, type, order, filters) {
 // ------------------------------------------------------------
 // Helpers
 // ------------------------------------------------------------
+
+// GET simple que devuelve el body si sale bien, o null si falla --
+// pensado para poder probar mobile primero y desktop como fallback
+// sin repetir el manejo de errores dos veces.
+function fetchPageHtml(url) {
+    try {
+        const resp = http.GET(url, {
+            "Referer": "https://ok.ru/"
+        }, false);
+        return resp.isOk ? resp.body : null;
+    } catch (e) {
+        return null;
+    }
+}
+
 function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
@@ -280,4 +301,4 @@ function safeJsonUnescape(fragment) {
 // este es el próximo lugar a revisar.
 source.getHome = function () {
     return new VideoPager([], false, {});
-}; 
+};
