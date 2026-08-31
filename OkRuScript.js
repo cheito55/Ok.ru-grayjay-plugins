@@ -220,20 +220,22 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
 
     const sources = [];
 
-    // Los mp4 progresivos van PRIMERO: cada uno es una sola petición al
-    // CDN, mientras que HLS son decenas de pedacitos -- si el link
-    // firmado de OK.ru no valida bien contra el Chromecast (que pide el
-    // stream directo, sin pasar por el teléfono), un mp4 tiene más
-    // chances de funcionar para cast que un manifest HLS entero.
-    // Se ordenan de mejor a peor calidad conocida en OK.ru.
+    // NOTA: se probó poner los mp4 primero pensando que ayudarían al
+    // cast por Chromecast (menos peticiones que HLS), pero en la
+    // práctica fallaron más rápido, no mejor -- indicio de que el
+    // link firmado de OK.ru se rechaza igual sin importar el formato.
+    // Se vuelve al orden original (HLS primero), que es el que mejor
+    // funcionó para reproducción normal en el celular.
+    if (hlsUrl) {
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: hlsUrl,
+            duration: intOrZero(movie.duration)
+        }));
+    }
+
     if (Array.isArray(metadata.videos)) {
-        const qualityRank = { full: 0, hd: 1, sd: 2, low: 3, lowest: 4, mobile: 5 };
-        const videosSorted = metadata.videos.slice().sort(function (a, b) {
-            const ra = qualityRank.hasOwnProperty(a.name) ? qualityRank[a.name] : 99;
-            const rb = qualityRank.hasOwnProperty(b.name) ? qualityRank[b.name] : 99;
-            return ra - rb;
-        });
-        for (const v of videosSorted) {
+        for (const v of metadata.videos) {
             if (v && v.url) {
                 sources.push(new VideoUrlSource({
                     name: v.name || "mp4",
@@ -242,16 +244,6 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 }));
             }
         }
-    }
-
-    // HLS queda como respaldo al final (por si algún video viejo no
-    // trae mp4 directos, o para reproducción local en el celular).
-    if (hlsUrl) {
-        sources.push(new HLSSource({
-            name: "HLS",
-            url: hlsUrl,
-            duration: intOrZero(movie.duration)
-        }));
     }
 
     if (sources.length === 0) {
