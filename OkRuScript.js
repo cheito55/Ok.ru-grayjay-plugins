@@ -259,7 +259,7 @@ function posterFromHtml(block) {
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) atributo style con data-src de carga perezosa en <img>
+    // 5) <img src>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
     // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
