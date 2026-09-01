@@ -1,23 +1,6 @@
 // ============================================================
-// Plugin de GrayJay para OK.ru (Odnoklassniki) v3
+// Plugin de GrayJay para OK.ru (Odnoklassniki) v2
 // ============================================================
-//
-// CAMBIO CLAVE (v3): el Cast a Chromecast fallaba porque el CDN
-// de OK.ru (okcdn.ru) exige un header Referer que reconozca, y
-// el codigo anterior intentaba resolver esto con "impersonateTarget"
-// (impersonacion TLS via httpimp), lo cual requiere una libreria
-// que no siempre esta disponible y ademas cambia el motor HTTP
-// interno de GrayJay.
-//
-// La correccion usa el mismo patron que el plugin OFICIAL de
-// Odysee (que sí castea sin problemas): requestModifier con
-// headers planos, sin impersonacion:
-//
-//   requestModifier: { headers: { "Referer": "...", ... } }
-//
-// Esto le dice a GrayJay que adjunte esos headers a cada peticion
-// que hace el reproductor/Chromecast al pedir el video, sin tocar
-// el motor de conexion HTTP.
 //
 // LOGIN OPCIONAL:
 // Si el navegador integrado de GrayJay no carga OK.ru, podes
@@ -29,12 +12,6 @@
 //   2. Inicia sesion
 //   3. Busca las cookies JSESSIONID, AUTHCODE y domain_sid
 //   4. Pegalas abajo entre las comillas.
-//
-// ATENCION SEGURIDAD: si este archivo se sube a un repositorio
-// PUBLICO de GitHub con las cookies rellenas, cualquiera que lo
-// lea puede usar tu sesion de OK.ru. Se recomienda dejar estos
-// tres campos vacios en la version que se publica, y pegarlos
-// solo en una copia local del archivo.
 //
 // NOTA: Algunos videos en OK.ru son embeds de YouTube
 // (provider: USER_YOUTUBE). Estos NO se pueden reproducir
@@ -57,16 +34,10 @@ const MANUAL_DOMAIN_SID = "c50T0RmY5G6B7bBAXzmNB%3A1788115233512";
 
 let PLUGIN_ID = "";
 
-// ------------------------------------------------------------
-// Headers para reproduccion/Cast (patron Odysee: headers planos,
-// sin impersonacion TLS). Referer y Origin son los que okcdn.ru
-// revisa para autorizar la entrega del video/manifest.
-// ------------------------------------------------------------
-const PLAYBACK_HEADERS = {
-    "Referer": "https://ok.ru/",
-    "Origin": "https://ok.ru",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-};
+// curl-impersonate para Cast (solo si httpimp existe)
+const IS_DESKTOP = (typeof bridge !== 'undefined') ? bridge.buildPlatform === "desktop" : false;
+const IMPERSONATION_TARGET = IS_DESKTOP ? 'chrome136' : 'chrome131_android';
+const IS_IMPERSONATION_AVAILABLE = (typeof httpimp !== 'undefined');
 
 source.enable = function (conf, settings, savedState) {
     PLUGIN_ID = (conf && conf.id) ? conf.id : "";
@@ -90,11 +61,10 @@ source.getContentDetails = function (url) {
     // Intentar cargar la pagina con múltiples estrategias
     let html = null;
     let optionsData = null;
-    let cookieHeader = "";
 
     // Estrategia 1: desktop con cookies manuales
     if (MANUAL_JSESSIONID || MANUAL_AUTHCODE) {
-        cookieHeader = buildCookieHeader();
+        var cookieHeader = buildCookieHeader();
         html = fetchPageWithCookie(pageUrl, cookieHeader);
         optionsData = extractDataOptions(html);
     }
@@ -108,7 +78,7 @@ source.getContentDetails = function (url) {
     // Estrategia 3: movil con cookies manuales
     if (!optionsData) {
         var mobileUrl = "https://m.ok.ru/video/" + videoId;
-        html = fetchPageWithCookie(mobileUrl, cookieHeader);
+        html = fetchPageWithCookie(mobileUrl, cookieHeader || "");
         optionsData = extractDataOptions(html);
     }
 
@@ -165,7 +135,7 @@ source.getContentDetails = function (url) {
         throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
     }
 
-    return buildVideoDetails(videoId, pageUrl, metadata, cookieHeader);
+    return buildVideoDetails(videoId, pageUrl, metadata);
 };
 
 // ------------------------------------------------------------
@@ -389,41 +359,60 @@ function posterFromHtml(block) {
     return url;
 }
 
+function fetchPageHtml(url) {
+    return fetchPageWithCookie(url, buildCookieHeader()) || fetchPageAuthenticated(url);
+}
+
 // ------------------------------------------------------------
 // Construccion del video
 // ------------------------------------------------------------
-function buildVideoDetails(videoId, pageUrl, metadata, cookieHeader) {
+function buildVideoDetails(videoId, pageUrl, metadata) {
     var movie = safeObj(metadata.movie);
     var author = safeObj(metadata.author);
+
+    // impersonateTarget solo si httpimp existe
+    var impOpts = IS_IMPERSONATION_AVAILABLE ? {
+        options: {
+            applyAuthClient: "",
+            applyCookieClient: "",
+            applyOtherHeaders: false,
+            impersonateTarget: IMPERSONATION_TARGET
+        }
+    } : null;
 
     var sources = [];
     var seenUrls = {};
 
+    // === HLS (prioridad máxima) ===
     var hlsCandidates = collectHlsUrls(metadata);
     for (var i = 0; i < hlsCandidates.length; i++) {
         var u = hlsCandidates[i];
         if (seenUrls[u]) continue;
         seenUrls[u] = true;
-        sources.push(new HLSSource({
+        var hlsOpts = {
             name: "HLS",
             url: u,
-            duration: intOrZero(movie.duration),
-            requestModifier: { headers: PLAYBACK_HEADERS }
-        }));
+            duration: intOrZero(movie.duration)
+        };
+        if (impOpts) hlsOpts.requestModifier = impOpts;
+        sources.push(new HLSSource(hlsOpts));
     }
 
+    // === MP4 (fallback) ===
     var videos = metadata.videos || [];
     for (var j = 0; j < videos.length; j++) {
         var v = videos[j];
         if (!v || !v.url || seenUrls[v.url]) continue;
+        // Saltar embeds externos
         if (EXTERNAL_EMBED_REGEX.test(v.url)) continue;
         seenUrls[v.url] = true;
-        sources.push(new VideoUrlSource({
+        var mp4Opts = {
             name: v.name || ("mp4-" + (j + 1)),
             url: v.url,
-            container: "video/mp4",
-            requestModifier: { headers: PLAYBACK_HEADERS }
-        }));
+            container: "video/mp4"
+        };
+        if (impOpts) mp4Opts.requestModifier = impOpts;
+        sources.push(new VideoUrlSource(mp4Opts));
     }
 
     if (sources.length === 0) {
@@ -436,8 +425,6 @@ function buildVideoDetails(videoId, pageUrl, metadata, cookieHeader) {
         }
         throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
     }
-
-    var video = new VideoSourceDescriptor(sources);
 
     return new PlatformVideoDetails({
         id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
@@ -454,7 +441,7 @@ function buildVideoDetails(videoId, pageUrl, metadata, cookieHeader) {
             author.name || "OK.ru",
             "", ""
         ),
-        video: video
+        video: new VideoSourceDescriptor(sources)
     });
 }
 
