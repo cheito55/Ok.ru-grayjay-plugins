@@ -29,13 +29,6 @@ const MANUAL_DOMAIN_SID = "c50T0RmY5G6B7bBAXzmNB%3A1788115233512";
 
 let PLUGIN_ID = "";
 
-// Dailymotion/PeerTube pattern: curl-impersonate para Cast
-// Solo se activa si httpimp esta disponible en el dispositivo.
-// Si NO esta disponible, funciona igual que YouTube (sin requestModifier).
-const IS_DESKTOP = (typeof bridge !== 'undefined') ? bridge.buildPlatform === "desktop" : false;
-const IMPERSONATION_TARGET = IS_DESKTOP ? 'chrome136' : 'chrome131_android';
-const IS_IMPERSONATION_AVAILABLE = (typeof httpimp !== 'undefined');
-
 source.enable = function (conf, settings, savedState) {
     PLUGIN_ID = (conf && conf.id) ? conf.id : "";
 };
@@ -273,18 +266,6 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
-    // Dailymotion/PeerTube: impersonateTarget solo si httpimp existe.
-    // Si httpimp NO existe (mayoria de dispositivos), no se usa
-    // requestModifier y funciona como YouTube (reproduccion local OK).
-    const impOpts = IS_IMPERSONATION_AVAILABLE ? {
-        options: {
-            applyAuthClient: "",
-            applyCookieClient: "",
-            applyOtherHeaders: false,
-            impersonateTarget: IMPERSONATION_TARGET
-        }
-    } : null;
-
     const sources = [];
     const seenUrls = {};
 
@@ -319,15 +300,11 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         const u = hlsCandidates[i];
         if (seenUrls[u]) continue;
         seenUrls[u] = true;
-        const hlsOpts = {
+        sources.push(new HLSSource({
             name: "HLS",
             url: u,
             duration: intOrZero(movie.duration)
-        };
-        if (impOpts) {
-            hlsOpts.requestModifier = impOpts;
-        }
-        sources.push(new HLSSource(hlsOpts));
+        }));
     }
 
     // MP4 fallback
@@ -336,15 +313,11 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
             const v = metadata.videos[i];
             if (v && v.url && !seenUrls[v.url]) {
                 seenUrls[v.url] = true;
-                const mp4Opts = {
+                sources.push(new VideoUrlSource({
                     name: v.name || ("mp4-" + (i + 1)),
                     url: v.url,
                     container: "video/mp4"
-                };
-                if (impOpts) {
-                    mp4Opts.requestModifier = impOpts;
-                }
-                sources.push(new VideoUrlSource(mp4Opts));
+                }));
             }
         }
     }
