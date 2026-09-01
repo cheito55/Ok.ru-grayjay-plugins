@@ -3,14 +3,14 @@
 // ============================================================
 //
 // LOGIN OPCIONAL:
-// Si el navegador integrado de GrayJay no carga OK.ru, podés
+// Si el navegador integrado de GrayJay no carga OK.ru, podes
 // hacer login manualmente pegando tus cookies en el bloque
 // COOKIES de abajo.
 //
-// Cómo obtenerlas:
-//   1. Abrí ok.ru en el navegador de tu celular/PC
-//   2. Iniciá sesión
-//   3. Buscá las cookies JSESSIONID, AUTHCODE y domain_sid
+// Como obtenerlas:
+//   1. Abri ok.ru en el navegador de tu celular/PC
+//   2. Inicia sesion
+//   3. Busca las cookies JSESSIONID, AUTHCODE y domain_sid
 //   4. Pegalas abajo entre las comillas.
 // ============================================================
 
@@ -20,8 +20,8 @@ const SEARCH_URL_BASE = "https://ok.ru/dk?st.cmd=searchResult&st.mode=Movie&st.g
 
 // ============================================================
 // COOKIES MANUALES
-// Pegá acá las cookies que obtuviste del navegador.
-// Dejá vacío "" si usás el login normal de GrayJay.
+// Pega aca las cookies que obtuviste del navegador.
+// Deja vacio "" si usas el login normal de GrayJay.
 // ============================================================
 const MANUAL_JSESSIONID = "9249fef29c13e61ff271bbbd9e1140ec72384bb6d43b36c.7d71e5de";
 const MANUAL_AUTHCODE = "_OZM5rnTmi_AnnX-uT1e3teX8PVWIf6cFOiel2Le_VV2_zw7WD9cwuJfxfaKJ2NoG8YmIleZSvWAs2mE4UI8_gLsrUNKVF8piJXdg8dVJTqqPMv5CtO43ayWeb4-Ur_fWmhXTOrMhe70mZbfYg_5";
@@ -38,7 +38,7 @@ source.isContentDetailsUrl = function (url) {
 };
 
 // ------------------------------------------------------------
-// Obtención del detalle/reproducción del video
+// Obtencion del detalle/reproduccion del video
 // ------------------------------------------------------------
 source.getContentDetails = function (url) {
     const match = url.match(REGEX_VIDEO_URL);
@@ -58,7 +58,7 @@ source.getContentDetails = function (url) {
     }
 
     if (!html) {
-        throw new ScriptException("No se pudo cargar la página de OK.ru");
+        throw new ScriptException("No se pudo cargar la pagina de OK.ru");
     }
 
     const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
@@ -67,7 +67,7 @@ source.getContentDetails = function (url) {
     }
 
     if (!optionsMatch) {
-        throw new ScriptException("No se encontró data-options en la página");
+        throw new ScriptException("No se encontro data-options en la pagina");
     }
 
     const optionsJson = unescapeHtml(optionsMatch[1]);
@@ -98,16 +98,16 @@ source.getContentDetails = function (url) {
             ? JSON.parse(metaResp.body)
             : metaResp.body;
     } else {
-        throw new ScriptException("No se encontró metadata ni metadataUrl en flashvars");
+        throw new ScriptException("No se encontro metadata ni metadataUrl en flashvars");
     }
 
     return buildVideoDetails(videoId, pageUrl, metadata);
 };
 
 // ------------------------------------------------------------
-// Búsqueda de videos
+// Busqueda de videos
 // ------------------------------------------------------------
-// Usa st.cmd=searchResult que EXIGE sesión logueada.
+// Usa st.cmd=searchResult que EXIGE sesion logueada.
 // Intenta: 1) cookies manuales, 2) cookies de GrayJay (useAuth).
 source.search = function (query, type, order, filters) {
     if (!query) {
@@ -153,8 +153,8 @@ source.search = function (query, type, order, filters) {
 
     if (results.length === 0) {
         throw new ScriptException(
-            "No se encontraron resultados. Verificá que las cookies " +
-            "manuales sean válidas o hacé login desde Sources > OK.ru."
+            "No se encontraron resultados. Verifica que las cookies " +
+            "manuales sean validas o hace login desde Sources > OK.ru."
         );
     }
 
@@ -162,17 +162,9 @@ source.search = function (query, type, order, filters) {
 };
 
 // ------------------------------------------------------------
-// Parseo de resultados de búsqueda
-// ------------------------------------------------------------
-// Los resultados autenticados usan la estructura HTML:
-//   - data-movie-id="ID"
-//   - portal_search_name title="TITULO"
-//   - video-card_duration > DURACION
-//   - portal_search_info-i > VISTAS
-//   - data-poster-src="URL_POSTER"
+// Parseo de resultados de busqueda
 // ------------------------------------------------------------
 function parseSearchResults(html, results) {
-    // Buscamos IDs únicos de video en la página
     const seen = {};
     const movieIdRegex = /data-movie-id="(\d+)"/g;
     let idMatch;
@@ -182,38 +174,25 @@ function parseSearchResults(html, results) {
         if (seen[videoId]) continue;
         seen[videoId] = true;
 
-        // Buscamos contexto alrededor de este video.
-        // data-poster-src / portada aparece ANTES de data-movie-id en el HTML.
-        // Usamos una ventana amplia para cubrir las tarjetas de película,
-        // que pueden tener mucho HTML entre la portada y el id del video.
         const searchStart = Math.max(0, idMatch.index - 3000);
         const searchEnd = Math.min(idMatch.index + 8000, html.length);
         const block = html.substring(searchStart, searchEnd);
 
-        // Título: portal_search_name con title=""
         const titleMatch = block.match(/portal_search_name"[^>]*title="([^"]+)"/);
         const title = titleMatch
             ? unescapeHtml(titleMatch[1])
             : "Video de OK.ru";
 
-        // Duración: video-card_duration
         const durMatch = block.match(/video-card_duration"[^>]*>([^<]+)/);
         const durStr = durMatch ? durMatch[1].trim() : "0:00";
         const durationSec = parseDuration(durStr);
 
-        // Vistas: portal_search_info-i
         const viewsMatch = block.match(/portal_search_info-i">([^<]+)/);
         const viewsStr = viewsMatch ? viewsMatch[1].trim() : "0";
         const viewCount = parseViewCount(viewsStr);
 
-        // Poster: OK.ru usa estructuras HTML distintas según el tipo de
-        // tarjeta (película, clip, perfil, etc.). Probamos TODOS los
-        // patrones conocidos, incluidas las cargas perezosas (lazy-load)
-        // y el JSON en data-options de las tarjetas de película.
         let posterUrl = posterFromHtml(block);
         if (!posterUrl) {
-            // Último recurso: busco cualquier URL de imagen de okcdn.net/ru
-            // dentro del bloque que parezca una portada.
             const anyImg = block.match(
                 /(?:https?:)?\/\/[^'"\s]+(?:okcdn\.(?:ru|net)|userapi\.com)[^'"\s]*\.(?:jpe?g|png|webp)/i
             );
@@ -251,33 +230,21 @@ function parseSearchResults(html, results) {
 // ------------------------------------------------------------
 
 function posterFromHtml(block) {
-    // 1) data-poster-src (clips)
     let m = block.match(/data-poster-src="([^"]+)"/);
-    // 2) data-poster-url (películas en algunas versiones)
     if (!m) m = block.match(/data-poster-url="([^"]+)"/);
-    // 3) poster-src genérico
     if (!m) m = block.match(/poster-src="([^"]+)"/);
-    // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) <img src>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
-    // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
-    // 7) data-src genérico (componentes lazy de OK.ru)
     if (!m) m = block.match(/data-src="([^"]+)"/);
 
     if (!m) return "";
 
     let url = m[1];
-    // Limpiar posibles prefijos de esquema o entidades escapadas
     url = url.replace(/&amp;/g, "&");
-    // Algunas URLs vienen sin esquema (ej: //iv.okcdn.ru/...)
     if (url.indexOf("http") !== 0 && url.indexOf("//") === 0) {
         url = "https:" + url;
     }
-    // Descartar íconos pequeños / marcadores que no sean imágenes
-    // (logos, avatares genéricos). Las portadas reales siempre vienen
-    // del CDN de OK (okcdn.ru / okcdn.net / userapi.com).
     if (!/(?:okcdn|userapi\.com)/.test(url)) {
         return "";
     }
@@ -299,16 +266,10 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
-    // Estilo YouTube: NO usamos requestModifier.  YouTube hace Cast
-    // perfecto porque sus URLs de CDN no requieren headers extra.
-    // Las URLs de OK.ru (okcdn.ru) estan firmadas y, como las de
-    // YouTube, deberian reproducirse sin headers personalizados.
-    // (Agregar requestModifier activa JSHttpDataSource y rompe la
-    //  reproduccion local de OK.ru, asi que lo evitamos como hace YT.)
     const sources = [];
     const seenUrls = {};
 
-    // Buscar TODAS las URLs HLS posibles (HLS reproduce mejor en Cast)
+    // Buscar URLs HLS
     const hlsCandidates = [];
     const hlsKeys = [
         "hlsManifestUrl", "hlsMasterPlaylistUrl",
@@ -346,7 +307,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         }));
     }
 
-    // MP4 (fallback para reproduccion local)
+    // MP4 fallback
     if (Array.isArray(metadata.videos)) {
         for (let i = 0; i < metadata.videos.length; i++) {
             const v = metadata.videos[i];
@@ -365,7 +326,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         if (metadata.paymentInfo) {
             throw new ScriptException("Este video es pago en OK.ru.");
         }
-        throw new ScriptException("No se encontró ninguna fuente de video reproducible.");
+        throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
     }
 
     return new PlatformVideoDetails({
@@ -409,7 +370,6 @@ function safeJsonUnescape(fragment) {
     }
 }
 
-// Parsea duraciones como "02:58" o "1:35:02" a segundos
 function parseDuration(str) {
     const parts = str.split(":").map(Number);
     if (parts.length === 3) {
@@ -420,7 +380,6 @@ function parseDuration(str) {
     return 0;
 }
 
-// Parsea strings como "910 views" o "72 771 просмотров" a número
 function parseViewCount(str) {
     const cleaned = str
         .replace(/&nbsp;/g, "")
