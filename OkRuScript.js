@@ -12,11 +12,18 @@
 //   2. Inicia sesion
 //   3. Busca las cookies JSESSIONID, AUTHCODE y domain_sid
 //   4. Pegalas abajo entre las comillas.
+//
+// NOTA: Algunos videos en OK.ru son embeds de YouTube
+// (provider: USER_YOUTUBE). Estos NO se pueden reproducir
+// desde el plugin de OK.ru. Buscalos directamente en YouTube.
 // ============================================================
 
 const PLATFORM_NAME = "OK.ru";
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
 const SEARCH_URL_BASE = "https://ok.ru/dk?st.cmd=searchResult&st.mode=Movie&st.grmode=Groups&st.query=";
+
+// URLs que NO son videos directos de OK.ru (son embeds externos)
+const EXTERNAL_EMBED_REGEX = /(?:youtube\.com\/v\/|youtu\.be\/|youtube\.com\/embed\/|vimeo\.com\/|dailymotion\.com\/)/i;
 
 // ============================================================
 // COOKIES MANUALES
@@ -28,6 +35,12 @@ const MANUAL_AUTHCODE = "_OZM5rnTmi_AnnX-uT1e3teX8PVWIf6cFOiel2Le_VV2_zw7WD9cwuJ
 const MANUAL_DOMAIN_SID = "c50T0RmY5G6B7bBAXzmNB%3A1788115233512";
 
 let PLUGIN_ID = "";
+
+// Dailymotion/PeerTube: curl-impersonate para Cast
+// Solo se activa si httpimp esta disponible en el dispositivo.
+const IS_DESKTOP = (typeof bridge !== 'undefined') ? bridge.buildPlatform === "desktop" : false;
+const IMPERSONATION_TARGET = IS_DESKTOP ? 'chrome136' : 'chrome131_android';
+const IS_IMPERSONATION_AVAILABLE = (typeof httpimp !== 'undefined');
 
 source.enable = function (conf, settings, savedState) {
     PLUGIN_ID = (conf && conf.id) ? conf.id : "";
@@ -101,14 +114,33 @@ source.getContentDetails = function (url) {
         throw new ScriptException("No se encontro metadata ni metadataUrl en flashvars");
     }
 
+    // Detectar videos externos (YouTube embeds, etc.)
+    const provider = metadata.provider || "";
+    if (provider.indexOf("YOUTUBE") !== -1 || provider.indexOf("VIMEO") !== -1) {
+        throw new ScriptException(
+            "Este video es un embed de " + provider.replace("USER_", "") +
+            " alojado en OK.ru. No se puede reproducir desde este plugin. " +
+            "Buscalo directamente en " + provider.replace("USER_", "") + "."
+        );
+    }
+
+    // Verificar que las URLs de video no sean embeds externos
+    const videos = metadata.videos || [];
+    for (let i = 0; i < videos.length; i++) {
+        if (videos[i] && videos[i].url && EXTERNAL_EMBED_REGEX.test(videos[i].url)) {
+            throw new ScriptException(
+                "Este video es un embed externo alojado en OK.ru. " +
+                "No se puede reproducir desde este plugin."
+            );
+        }
+    }
+
     return buildVideoDetails(videoId, pageUrl, metadata);
 };
 
 // ------------------------------------------------------------
 // Busqueda de videos
 // ------------------------------------------------------------
-// Usa st.cmd=searchResult que EXIGE sesion logueada.
-// Intenta: 1) cookies manuales, 2) cookies de GrayJay (useAuth).
 source.search = function (query, type, order, filters) {
     if (!query) {
         return new VideoPager([], false, {});
@@ -266,6 +298,16 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
+    // Dailymotion/PeerTube: impersonateTarget solo si httpimp existe
+    const impOpts = IS_IMPERSONATION_AVAILABLE ? {
+        options: {
+            applyAuthClient: "",
+            applyCookieClient: "",
+            applyOtherHeaders: false,
+            impersonateTarget: IMPERSONATION_TARGET
+        }
+    } : null;
+
     const sources = [];
     const seenUrls = {};
 
@@ -300,29 +342,48 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         const u = hlsCandidates[i];
         if (seenUrls[u]) continue;
         seenUrls[u] = true;
-        sources.push(new HLSSource({
+        const hlsOpts = {
             name: "HLS",
             url: u,
             duration: intOrZero(movie.duration)
-        }));
+        };
+        if (impOpts) {
+            hlsOpts.requestModifier = impOpts;
+        }
+        sources.push(new HLSSource(hlsOpts));
     }
 
-    // MP4 fallback
+    // MP4 fallback - saltar URLs de embeds externos
     if (Array.isArray(metadata.videos)) {
         for (let i = 0; i < metadata.videos.length; i++) {
             const v = metadata.videos[i];
             if (v && v.url && !seenUrls[v.url]) {
+                // Saltar embeds de YouTube/Vimeo/etc
+                if (EXTERNAL_EMBED_REGEX.test(v.url)) {
+                    continue;
+                }
                 seenUrls[v.url] = true;
-                sources.push(new VideoUrlSource({
+                const mp4Opts = {
                     name: v.name || ("mp4-" + (i + 1)),
                     url: v.url,
                     container: "video/mp4"
-                }));
+                };
+                if (impOpts) {
+                    mp4Opts.requestModifier = impOpts;
+                }
+                sources.push(new VideoUrlSource(mp4Opts));
             }
         }
     }
 
     if (sources.length === 0) {
+        const provider = metadata.provider || "";
+        if (provider.indexOf("YOUTUBE") !== -1) {
+            throw new ScriptException(
+                "Este video es un embed de YouTube alojado en OK.ru. " +
+                "Buscalo directamente en YouTube."
+            );
+        }
         if (metadata.paymentInfo) {
             throw new ScriptException("Este video es pago en OK.ru.");
         }
