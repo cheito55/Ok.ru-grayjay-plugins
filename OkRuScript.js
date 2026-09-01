@@ -390,130 +390,54 @@ function posterFromHtml(block) {
 }
 
 // ------------------------------------------------------------
-// Deteccion de audio separado dentro del manifest HLS
-// ------------------------------------------------------------
-// Chromecast en GrayJay solo proxea el pedido por el celular (y por lo
-// tanto solo aplica los headers de requestModifier) cuando el contenido
-// se entrega como streams de video y audio SEPARADOS. Si el HLS de
-// OK.ru viene todo muxeado en un solo track, Chromecast pide la URL
-// directo al CDN sin pasar por el celular y el Referer nunca llega.
-//
-// Esta funcion baja el master.m3u8 real y busca una linea
-// #EXT-X-MEDIA:TYPE=AUDIO con su propia URI (audio separado) y la
-// variante de video correspondiente. Si las encuentra, se puede armar
-// un UnMuxVideoSourceDescriptor (video-only + audio-only) que SI se
-// proxea. Si no las encuentra, es un HLS muxeado y no hay nada que
-// hacer desde este angulo.
-function tryDetectSeparateAudioVideo(manifestUrl, cookieHeader) {
-    try {
-        var headers = { "Referer": "https://ok.ru/" };
-        if (cookieHeader) headers["Cookie"] = cookieHeader;
-        var resp = http.GET(manifestUrl, headers, false);
-        if (!resp.isOk || !resp.body) return null;
-
-        var body = resp.body;
-        var baseUrl = manifestUrl.substring(0, manifestUrl.lastIndexOf("/") + 1);
-
-        var resolve = function (u) {
-            if (!u) return u;
-            if (u.indexOf("http") === 0) return u;
-            return baseUrl + u;
-        };
-
-        // Buscar pista de audio separada: #EXT-X-MEDIA:TYPE=AUDIO,...URI="..."
-        var audioMatch = body.match(/#EXT-X-MEDIA:TYPE=AUDIO[^\n]*URI="([^"]+)"/);
-        if (!audioMatch) return null; // No hay audio separado, es HLS muxeado
-
-        var audioUrl = resolve(audioMatch[1]);
-
-        // Buscar la primera variante de video (#EXT-X-STREAM-INF seguida de una URI)
-        var videoMatch = body.match(/#EXT-X-STREAM-INF:[^\n]*\n([^\n#][^\n]*)/);
-        if (!videoMatch) return null;
-
-        var videoUrl = resolve(videoMatch[1].trim());
-
-        return { videoUrl: videoUrl, audioUrl: audioUrl };
-    } catch (e) {
-        return null;
-    }
-}
-
-// ------------------------------------------------------------
 // Construccion del video
 // ------------------------------------------------------------
 function buildVideoDetails(videoId, pageUrl, metadata, cookieHeader) {
     var movie = safeObj(metadata.movie);
     var author = safeObj(metadata.author);
 
+    var sources = [];
+    var seenUrls = {};
+
     var hlsCandidates = collectHlsUrls(metadata);
-
-    // === Intento 1: streams separados (necesario para que el Cast proxee) ===
-    var unmuxed = null;
-    for (var k = 0; k < hlsCandidates.length && !unmuxed; k++) {
-        unmuxed = tryDetectSeparateAudioVideo(hlsCandidates[k], cookieHeader);
+    for (var i = 0; i < hlsCandidates.length; i++) {
+        var u = hlsCandidates[i];
+        if (seenUrls[u]) continue;
+        seenUrls[u] = true;
+        sources.push(new HLSSource({
+            name: "HLS",
+            url: u,
+            duration: intOrZero(movie.duration),
+            requestModifier: { headers: PLAYBACK_HEADERS }
+        }));
     }
 
-    var video;
-
-    if (unmuxed) {
-        video = new UnMuxVideoSourceDescriptor(
-            [new HLSSource({
-                name: "Video",
-                url: unmuxed.videoUrl,
-                duration: intOrZero(movie.duration),
-                requestModifier: { headers: PLAYBACK_HEADERS }
-            })],
-            [new HLSSource({
-                name: "Audio",
-                url: unmuxed.audioUrl,
-                duration: intOrZero(movie.duration),
-                requestModifier: { headers: PLAYBACK_HEADERS }
-            })]
-        );
-    } else {
-        // === Fallback: HLS/MP4 muxeado (comportamiento anterior) ===
-        var sources = [];
-        var seenUrls = {};
-
-        for (var i = 0; i < hlsCandidates.length; i++) {
-            var u = hlsCandidates[i];
-            if (seenUrls[u]) continue;
-            seenUrls[u] = true;
-            sources.push(new HLSSource({
-                name: "HLS",
-                url: u,
-                duration: intOrZero(movie.duration),
-                requestModifier: { headers: PLAYBACK_HEADERS }
-            }));
-        }
-
-        var videos = metadata.videos || [];
-        for (var j = 0; j < videos.length; j++) {
-            var v = videos[j];
-            if (!v || !v.url || seenUrls[v.url]) continue;
-            if (EXTERNAL_EMBED_REGEX.test(v.url)) continue;
-            seenUrls[v.url] = true;
-            sources.push(new VideoUrlSource({
-                name: v.name || ("mp4-" + (j + 1)),
-                url: v.url,
-                container: "video/mp4",
-                requestModifier: { headers: PLAYBACK_HEADERS }
-            }));
-        }
-
-        if (sources.length === 0) {
-            var provider = safeStr(metadata.provider);
-            if (provider.indexOf("YOUTUBE") !== -1) {
-                throw new ScriptException("Este video es un embed de YouTube. Buscalo en YouTube.");
-            }
-            if (metadata.paymentInfo) {
-                throw new ScriptException("Este video es pago en OK.ru.");
-            }
-            throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
-        }
-
-        video = new VideoSourceDescriptor(sources);
+    var videos = metadata.videos || [];
+    for (var j = 0; j < videos.length; j++) {
+        var v = videos[j];
+        if (!v || !v.url || seenUrls[v.url]) continue;
+        if (EXTERNAL_EMBED_REGEX.test(v.url)) continue;
+        seenUrls[v.url] = true;
+        sources.push(new VideoUrlSource({
+            name: v.name || ("mp4-" + (j + 1)),
+            url: v.url,
+            container: "video/mp4",
+            requestModifier: { headers: PLAYBACK_HEADERS }
+        }));
     }
+
+    if (sources.length === 0) {
+        var provider = safeStr(metadata.provider);
+        if (provider.indexOf("YOUTUBE") !== -1) {
+            throw new ScriptException("Este video es un embed de YouTube. Buscalo en YouTube.");
+        }
+        if (metadata.paymentInfo) {
+            throw new ScriptException("Este video es pago en OK.ru.");
+        }
+        throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
+    }
+
+    var video = new VideoSourceDescriptor(sources);
 
     return new PlatformVideoDetails({
         id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
