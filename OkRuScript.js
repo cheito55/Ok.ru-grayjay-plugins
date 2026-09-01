@@ -1,5 +1,5 @@
 // ============================================================
-// Plugin de GrayJay para OK.ru (Odnoklassniki)
+// Plugin de GrayJay para OK.ru (Odnoklassniki) v2
 // ============================================================
 //
 // LOGIN OPCIONAL:
@@ -22,13 +22,11 @@ const PLATFORM_NAME = "OK.ru";
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/;
 const SEARCH_URL_BASE = "https://ok.ru/dk?st.cmd=searchResult&st.mode=Movie&st.grmode=Groups&st.query=";
 
-// URLs que NO son videos directos de OK.ru (son embeds externos)
+// URLs de embeds externos (no reproducibles desde OK.ru plugin)
 const EXTERNAL_EMBED_REGEX = /(?:youtube\.com\/v\/|youtu\.be\/|youtube\.com\/embed\/|vimeo\.com\/|dailymotion\.com\/)/i;
 
 // ============================================================
 // COOKIES MANUALES
-// Pega aca las cookies que obtuviste del navegador.
-// Deja vacio "" si usas el login normal de GrayJay.
 // ============================================================
 const MANUAL_JSESSIONID = "9249fef29c13e61ff271bbbd9e1140ec72384bb6d43b36c.7d71e5de";
 const MANUAL_AUTHCODE = "_OZM5rnTmi_AnnX-uT1e3teX8PVWIf6cFOiel2Le_VV2_zw7WD9cwuJfxfaKJ2NoG8YmIleZSvWAs2mE4UI8_gLsrUNKVF8piJXdg8dVJTqqPMv5CtO43ayWeb4-Ur_fWmhXTOrMhe70mZbfYg_5";
@@ -36,8 +34,7 @@ const MANUAL_DOMAIN_SID = "c50T0RmY5G6B7bBAXzmNB%3A1788115233512";
 
 let PLUGIN_ID = "";
 
-// Dailymotion/PeerTube: curl-impersonate para Cast
-// Solo se activa si httpimp esta disponible en el dispositivo.
+// curl-impersonate para Cast (solo si httpimp existe)
 const IS_DESKTOP = (typeof bridge !== 'undefined') ? bridge.buildPlatform === "desktop" : false;
 const IMPERSONATION_TARGET = IS_DESKTOP ? 'chrome136' : 'chrome131_android';
 const IS_IMPERSONATION_AVAILABLE = (typeof httpimp !== 'undefined');
@@ -60,62 +57,55 @@ source.getContentDetails = function (url) {
     }
     const videoId = match[1];
     const pageUrl = "https://ok.ru/video/" + videoId;
-    const mobileUrl = "https://m.ok.ru/video/" + videoId;
 
-    let html = fetchPageHtml(pageUrl);
-    let optionsMatch = html ? html.match(/data-options="([^"]+)"/) : null;
+    // Intentar cargar la pagina con múltiples estrategias
+    let html = null;
+    let optionsData = null;
 
-    if (!optionsMatch) {
-        html = fetchPageHtml(mobileUrl);
-        optionsMatch = html ? html.match(/data-options="([^"]+)"/) : null;
+    // Estrategia 1: desktop con cookies manuales
+    if (MANUAL_JSESSIONID || MANUAL_AUTHCODE) {
+        var cookieHeader = buildCookieHeader();
+        html = fetchPageWithCookie(pageUrl, cookieHeader);
+        optionsData = extractDataOptions(html);
+    }
+
+    // Estrategia 2: desktop con auth de GrayJay
+    if (!optionsData) {
+        html = fetchPageAuthenticated(pageUrl);
+        optionsData = extractDataOptions(html);
+    }
+
+    // Estrategia 3: movil con cookies manuales
+    if (!optionsData) {
+        var mobileUrl = "https://m.ok.ru/video/" + videoId;
+        html = fetchPageWithCookie(mobileUrl, cookieHeader || "");
+        optionsData = extractDataOptions(html);
+    }
+
+    // Estrategia 4: movil con auth de GrayJay
+    if (!optionsData) {
+        var mobileUrl2 = "https://m.ok.ru/video/" + videoId;
+        html = fetchPageAuthenticated(mobileUrl2);
+        optionsData = extractDataOptions(html);
     }
 
     if (!html) {
         throw new ScriptException("No se pudo cargar la pagina de OK.ru");
     }
 
-    const stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
-    if (stubError) {
-        throw new ScriptException("Video no disponible: " + stubError[1]);
-    }
-
-    if (!optionsMatch) {
+    if (!optionsData) {
+        // Verificar si es un stub de error
+        var stubError = html.match(/class="vp_video_stub_txt"[^>]*>([^<]+)</);
+        if (stubError) {
+            throw new ScriptException("Video no disponible: " + stubError[1].trim());
+        }
         throw new ScriptException("No se encontro data-options en la pagina");
     }
 
-    const optionsJson = unescapeHtml(optionsMatch[1]);
-    let options;
-    try {
-        options = JSON.parse(optionsJson);
-    } catch (e) {
-        throw new ScriptException("No se pudo parsear data-options: " + e);
-    }
-
-    const flashvars = options.flashvars || {};
-    let metadata;
-
-    if (flashvars.metadata) {
-        metadata = (typeof flashvars.metadata === "string")
-            ? JSON.parse(flashvars.metadata)
-            : flashvars.metadata;
-    } else if (flashvars.metadataUrl) {
-        const metadataUrl = decodeURIComponent(flashvars.metadataUrl);
-        const metaResp = http.POST(metadataUrl, "", {
-            "Referer": pageUrl,
-            "Content-Type": "application/x-www-form-urlencoded"
-        }, false);
-        if (!metaResp.isOk) {
-            throw new ScriptException("No se pudo obtener metadataUrl (status " + metaResp.code + ")");
-        }
-        metadata = (typeof metaResp.body === "string")
-            ? JSON.parse(metaResp.body)
-            : metaResp.body;
-    } else {
-        throw new ScriptException("No se encontro metadata ni metadataUrl en flashvars");
-    }
+    var metadata = parseMetadata(optionsData, pageUrl);
 
     // Detectar videos externos (YouTube embeds, etc.)
-    const provider = metadata.provider || "";
+    var provider = safeStr(metadata.provider);
     if (provider.indexOf("YOUTUBE") !== -1 || provider.indexOf("VIMEO") !== -1) {
         throw new ScriptException(
             "Este video es un embed de " + provider.replace("USER_", "") +
@@ -124,15 +114,25 @@ source.getContentDetails = function (url) {
         );
     }
 
-    // Verificar que las URLs de video no sean embeds externos
-    const videos = metadata.videos || [];
-    for (let i = 0; i < videos.length; i++) {
-        if (videos[i] && videos[i].url && EXTERNAL_EMBED_REGEX.test(videos[i].url)) {
+    // Verificar URLs de video antes de procesar
+    var videos = metadata.videos || [];
+    var hasRealVideo = false;
+    for (var vi = 0; vi < videos.length; vi++) {
+        if (videos[vi] && videos[vi].url && !EXTERNAL_EMBED_REGEX.test(videos[vi].url)) {
+            hasRealVideo = true;
+            break;
+        }
+    }
+
+    // Si no hay videos reales y no hay HLS, es un embed externo
+    if (!hasRealVideo && !hasHls(metadata)) {
+        if (provider.indexOf("YOUTUBE") !== -1) {
             throw new ScriptException(
-                "Este video es un embed externo alojado en OK.ru. " +
-                "No se puede reproducir desde este plugin."
+                "Este video es un embed de YouTube alojado en OK.ru. " +
+                "Buscalo directamente en YouTube."
             );
         }
+        throw new ScriptException("No se encontro ninguna fuente de video reproducible.");
     }
 
     return buildVideoDetails(videoId, pageUrl, metadata);
@@ -146,42 +146,35 @@ source.search = function (query, type, order, filters) {
         return new VideoPager([], false, {});
     }
 
-    const searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
-    const results = [];
+    var searchUrl = SEARCH_URL_BASE + encodeURIComponent(query);
+    var results = [];
 
     // Intento 1: Cookies manuales
     if (MANUAL_JSESSIONID || MANUAL_AUTHCODE || MANUAL_DOMAIN_SID) {
-        const cookieHeader = [
-            MANUAL_JSESSIONID ? "JSESSIONID=" + MANUAL_JSESSIONID : "",
-            MANUAL_AUTHCODE ? "AUTHCODE=" + MANUAL_AUTHCODE : "",
-            MANUAL_DOMAIN_SID ? "domain_sid=" + MANUAL_DOMAIN_SID : ""
-        ].filter(function(c) { return c; }).join("; ");
+        var cookieHeader = buildCookieHeader();
+        var resp = http.GET(searchUrl, {
+            "Referer": "https://ok.ru/video",
+            "Cookie": cookieHeader
+        }, false);
 
-        if (cookieHeader) {
-            const resp = http.GET(searchUrl, {
-                "Referer": "https://ok.ru/video",
-                "Cookie": cookieHeader
-            }, false);
-
-            if (resp.isOk) {
-                parseSearchResults(resp.body, results);
-                if (results.length > 0) {
-                    return new VideoPager(results, false, {});
-                }
+        if (resp.isOk) {
+            parseSearchResults(resp.body, results);
+            if (results.length > 0) {
+                return new VideoPager(results, false, {});
             }
         }
     }
 
-    // Intento 2: Cookies de GrayJay (login normal)
-    const resp = http.GET(searchUrl, {
+    // Intento 2: Cookies de GrayJay
+    var resp2 = http.GET(searchUrl, {
         "Referer": "https://ok.ru/video"
     }, true);
 
-    if (!resp.isOk) {
-        throw new ScriptException("Error al buscar en OK.ru (status " + resp.code + ")");
+    if (!resp2.isOk) {
+        throw new ScriptException("Error al buscar en OK.ru (status " + resp2.code + ")");
     }
 
-    parseSearchResults(resp.body, results);
+    parseSearchResults(resp2.body, results);
 
     if (results.length === 0) {
         throw new ScriptException(
@@ -197,44 +190,31 @@ source.search = function (query, type, order, filters) {
 // Parseo de resultados de busqueda
 // ------------------------------------------------------------
 function parseSearchResults(html, results) {
-    const seen = {};
-    const movieIdRegex = /data-movie-id="(\d+)"/g;
-    let idMatch;
+    var seen = {};
+    var movieIdRegex = /data-movie-id="(\d+)"/g;
+    var idMatch;
 
     while ((idMatch = movieIdRegex.exec(html)) !== null) {
-        const videoId = idMatch[1];
+        var videoId = idMatch[1];
         if (seen[videoId]) continue;
         seen[videoId] = true;
 
-        const searchStart = Math.max(0, idMatch.index - 3000);
-        const searchEnd = Math.min(idMatch.index + 8000, html.length);
-        const block = html.substring(searchStart, searchEnd);
+        var searchStart = Math.max(0, idMatch.index - 3000);
+        var searchEnd = Math.min(idMatch.index + 8000, html.length);
+        var block = html.substring(searchStart, searchEnd);
 
-        const titleMatch = block.match(/portal_search_name"[^>]*title="([^"]+)"/);
-        const title = titleMatch
-            ? unescapeHtml(titleMatch[1])
-            : "Video de OK.ru";
+        var titleMatch = block.match(/portal_search_name"[^>]*title="([^"]+)"/);
+        var title = titleMatch ? unescapeHtml(titleMatch[1]) : "Video de OK.ru";
 
-        const durMatch = block.match(/video-card_duration"[^>]*>([^<]+)/);
-        const durStr = durMatch ? durMatch[1].trim() : "0:00";
-        const durationSec = parseDuration(durStr);
+        var durMatch = block.match(/video-card_duration"[^>]*>([^<]+)/);
+        var durStr = durMatch ? durMatch[1].trim() : "0:00";
+        var durationSec = parseDuration(durStr);
 
-        const viewsMatch = block.match(/portal_search_info-i">([^<]+)/);
-        const viewsStr = viewsMatch ? viewsMatch[1].trim() : "0";
-        const viewCount = parseViewCount(viewsStr);
+        var viewsMatch = block.match(/portal_search_info-i">([^<]+)/);
+        var viewsStr = viewsMatch ? viewsMatch[1].trim() : "0";
+        var viewCount = parseViewCount(viewsStr);
 
-        let posterUrl = posterFromHtml(block);
-        if (!posterUrl) {
-            const anyImg = block.match(
-                /(?:https?:)?\/\/[^'"\s]+(?:okcdn\.(?:ru|net)|userapi\.com)[^'"\s]*\.(?:jpe?g|png|webp)/i
-            );
-            if (anyImg) {
-                posterUrl = anyImg[0];
-                if (posterUrl.indexOf("http") !== 0 && posterUrl.indexOf("//") === 0) {
-                    posterUrl = "https:" + posterUrl;
-                }
-            }
-        }
+        var posterUrl = posterFromHtml(block);
 
         results.push(new PlatformVideo({
             id: new PlatformID(PLATFORM_NAME, videoId, PLUGIN_ID),
@@ -245,8 +225,7 @@ function parseSearchResults(html, results) {
             author: new PlatformAuthorLink(
                 new PlatformID(PLATFORM_NAME, "", PLUGIN_ID),
                 "OK.ru",
-                "",
-                ""
+                "", ""
             ),
             uploadDate: 0,
             duration: durationSec,
@@ -258,11 +237,111 @@ function parseSearchResults(html, results) {
 }
 
 // ------------------------------------------------------------
-// Helpers
+// Funciones HTTP
 // ------------------------------------------------------------
 
+function buildCookieHeader() {
+    var parts = [];
+    if (MANUAL_JSESSIONID) parts.push("JSESSIONID=" + MANUAL_JSESSIONID);
+    if (MANUAL_AUTHCODE) parts.push("AUTHCODE=" + MANUAL_AUTHCODE);
+    if (MANUAL_DOMAIN_SID) parts.push("domain_sid=" + MANUAL_DOMAIN_SID);
+    return parts.join("; ");
+}
+
+function fetchPageWithCookie(url, cookieHeader) {
+    try {
+        var headers = { "Referer": "https://ok.ru/" };
+        if (cookieHeader) headers["Cookie"] = cookieHeader;
+        var resp = http.GET(url, headers, false);
+        return resp.isOk ? resp.body : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function fetchPageAuthenticated(url) {
+    try {
+        var resp = http.GET(url, { "Referer": "https://ok.ru/" }, true);
+        return resp.isOk ? resp.body : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function extractDataOptions(html) {
+    if (!html) return null;
+    // Buscar data-options que contenga flashvars (el del video, no otros)
+    var match = html.match(/data-options="([^"]*flashvars[^"]*)"/);
+    if (match) return match[1];
+    // Fallback: cualquier data-options
+    var match2 = html.match(/data-options="([^"]+)"/);
+    return match2 ? match2[1] : null;
+}
+
+function parseMetadata(optionsStr, pageUrl) {
+    var optionsJson = unescapeHtml(optionsStr);
+    var options;
+    try {
+        options = JSON.parse(optionsJson);
+    } catch (e) {
+        throw new ScriptException("No se pudo parsear data-options: " + e);
+    }
+
+    var flashvars = options.flashvars || {};
+    var metadata;
+
+    if (flashvars.metadata) {
+        metadata = (typeof flashvars.metadata === "string")
+            ? JSON.parse(flashvars.metadata)
+            : flashvars.metadata;
+    } else if (flashvars.metadataUrl) {
+        var metadataUrl = decodeURIComponent(flashvars.metadataUrl);
+        // Intentar POST primero, luego GET
+        var metaResp = http.POST(metadataUrl, "", {
+            "Referer": pageUrl,
+            "Content-Type": "application/x-www-form-urlencoded"
+        }, false);
+        if (!metaResp.isOk) {
+            metaResp = http.GET(metadataUrl, {
+                "Referer": pageUrl
+            }, false);
+        }
+        if (!metaResp.isOk) {
+            throw new ScriptException("No se pudo obtener metadata (status " + metaResp.code + ")");
+        }
+        metadata = (typeof metaResp.body === "string")
+            ? JSON.parse(metaResp.body)
+            : metaResp.body;
+    } else {
+        throw new ScriptException("No se encontro metadata ni metadataUrl en flashvars");
+    }
+
+    return metadata;
+}
+
+// ------------------------------------------------------------
+// Helpers de metadata
+// ------------------------------------------------------------
+
+function safeStr(val) {
+    return (typeof val === "string") ? val : "";
+}
+
+function safeObj(val) {
+    return (val && typeof val === "object" && !Array.isArray(val)) ? val : {};
+}
+
+function hasHls(metadata) {
+    var hlsKeys = ["hlsManifestUrl", "hlsMasterPlaylistUrl", "hlsUrl", "hls", "hlsUrlMobile"];
+    for (var i = 0; i < hlsKeys.length; i++) {
+        var val = metadata[hlsKeys[i]];
+        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1) return true;
+    }
+    return false;
+}
+
 function posterFromHtml(block) {
-    let m = block.match(/data-poster-src="([^"]+)"/);
+    var m = block.match(/data-poster-src="([^"]+)"/);
     if (!m) m = block.match(/data-poster-url="([^"]+)"/);
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
@@ -272,34 +351,27 @@ function posterFromHtml(block) {
 
     if (!m) return "";
 
-    let url = m[1];
-    url = url.replace(/&amp;/g, "&");
+    var url = m[1].replace(/&amp;/g, "&");
     if (url.indexOf("http") !== 0 && url.indexOf("//") === 0) {
         url = "https:" + url;
     }
-    if (!/(?:okcdn|userapi\.com)/.test(url)) {
-        return "";
-    }
+    if (!/(?:okcdn|userapi\.com)/.test(url)) return "";
     return url;
 }
 
 function fetchPageHtml(url) {
-    try {
-        const resp = http.GET(url, {
-            "Referer": "https://ok.ru/"
-        }, false);
-        return resp.isOk ? resp.body : null;
-    } catch (e) {
-        return null;
-    }
+    return fetchPageWithCookie(url, buildCookieHeader()) || fetchPageAuthenticated(url);
 }
 
+// ------------------------------------------------------------
+// Construccion del video
+// ------------------------------------------------------------
 function buildVideoDetails(videoId, pageUrl, metadata) {
-    const movie = metadata.movie || {};
-    const author = metadata.author || {};
+    var movie = safeObj(metadata.movie);
+    var author = safeObj(metadata.author);
 
-    // Dailymotion/PeerTube: impersonateTarget solo si httpimp existe
-    const impOpts = IS_IMPERSONATION_AVAILABLE ? {
+    // impersonateTarget solo si httpimp existe
+    var impOpts = IS_IMPERSONATION_AVAILABLE ? {
         options: {
             applyAuthClient: "",
             applyCookieClient: "",
@@ -308,81 +380,45 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         }
     } : null;
 
-    const sources = [];
-    const seenUrls = {};
+    var sources = [];
+    var seenUrls = {};
 
-    // Buscar URLs HLS
-    const hlsCandidates = [];
-    const hlsKeys = [
-        "hlsManifestUrl", "hlsMasterPlaylistUrl",
-        "hlsUrl", "hls_playlist", "hls", "hlsUrlMobile"
-    ];
-    for (let i = 0; i < hlsKeys.length; i++) {
-        const val = metadata[hlsKeys[i]];
-        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1) {
-            hlsCandidates.push(val);
-        }
-    }
-    try {
-        const rawStr = JSON.stringify(metadata);
-        const re = /(?:https?:)?\/\/[^"'\s]+\.m3u8[^"'\s]*/gi;
-        let m;
-        while ((m = re.exec(rawStr)) !== null) {
-            let u = m[0].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-            if (u.indexOf("http") !== 0 && u.indexOf("//") === 0) u = "https:" + u;
-            let dup = false;
-            for (let j = 0; j < hlsCandidates.length; j++) {
-                if (hlsCandidates[j] === u) { dup = true; break; }
-            }
-            if (!dup) hlsCandidates.push(u);
-        }
-    } catch (e) {}
-
-    for (let i = 0; i < hlsCandidates.length; i++) {
-        const u = hlsCandidates[i];
+    // === HLS (prioridad máxima) ===
+    var hlsCandidates = collectHlsUrls(metadata);
+    for (var i = 0; i < hlsCandidates.length; i++) {
+        var u = hlsCandidates[i];
         if (seenUrls[u]) continue;
         seenUrls[u] = true;
-        const hlsOpts = {
+        var hlsOpts = {
             name: "HLS",
             url: u,
             duration: intOrZero(movie.duration)
         };
-        if (impOpts) {
-            hlsOpts.requestModifier = impOpts;
-        }
+        if (impOpts) hlsOpts.requestModifier = impOpts;
         sources.push(new HLSSource(hlsOpts));
     }
 
-    // MP4 fallback - saltar URLs de embeds externos
-    if (Array.isArray(metadata.videos)) {
-        for (let i = 0; i < metadata.videos.length; i++) {
-            const v = metadata.videos[i];
-            if (v && v.url && !seenUrls[v.url]) {
-                // Saltar embeds de YouTube/Vimeo/etc
-                if (EXTERNAL_EMBED_REGEX.test(v.url)) {
-                    continue;
-                }
-                seenUrls[v.url] = true;
-                const mp4Opts = {
-                    name: v.name || ("mp4-" + (i + 1)),
-                    url: v.url,
-                    container: "video/mp4"
-                };
-                if (impOpts) {
-                    mp4Opts.requestModifier = impOpts;
-                }
-                sources.push(new VideoUrlSource(mp4Opts));
-            }
-        }
+    // === MP4 (fallback) ===
+    var videos = metadata.videos || [];
+    for (var j = 0; j < videos.length; j++) {
+        var v = videos[j];
+        if (!v || !v.url || seenUrls[v.url]) continue;
+        // Saltar embeds externos
+        if (EXTERNAL_EMBED_REGEX.test(v.url)) continue;
+        seenUrls[v.url] = true;
+        var mp4Opts = {
+            name: v.name || ("mp4-" + (j + 1)),
+            url: v.url,
+            container: "video/mp4"
+        };
+        if (impOpts) mp4Opts.requestModifier = impOpts;
+        sources.push(new VideoUrlSource(mp4Opts));
     }
 
     if (sources.length === 0) {
-        const provider = metadata.provider || "";
+        var provider = safeStr(metadata.provider);
         if (provider.indexOf("YOUTUBE") !== -1) {
-            throw new ScriptException(
-                "Este video es un embed de YouTube alojado en OK.ru. " +
-                "Buscalo directamente en YouTube."
-            );
+            throw new ScriptException("Este video es un embed de YouTube. Buscalo en YouTube.");
         }
         if (metadata.paymentInfo) {
             throw new ScriptException("Este video es pago en OK.ru.");
@@ -409,8 +445,57 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     });
 }
 
+function collectHlsUrls(metadata) {
+    var candidates = [];
+    var seen = {};
+
+    // 1. Buscar en campos conocidos
+    var hlsKeys = [
+        "hlsManifestUrl", "hlsMasterPlaylistUrl",
+        "hlsUrl", "hls_playlist", "hls", "hlsUrlMobile"
+    ];
+    for (var i = 0; i < hlsKeys.length; i++) {
+        var val = metadata[hlsKeys[i]];
+        if (val && typeof val === "string" && val.indexOf("m3u8") !== -1) {
+            var clean = cleanUrl(val);
+            if (clean && !seen[clean]) {
+                seen[clean] = true;
+                candidates.push(clean);
+            }
+        }
+    }
+
+    // 2. Buscar en JSON serializado (método amplio)
+    try {
+        var rawStr = JSON.stringify(metadata);
+        var re = /(?:https?:)?\/\/[^"'\s\\]+\.m3u8[^"'\s\\]*/gi;
+        var m;
+        while ((m = re.exec(rawStr)) !== null) {
+            var u = cleanUrl(m[0]);
+            if (u && !seen[u]) {
+                seen[u] = true;
+                candidates.push(u);
+            }
+        }
+    } catch (e) {}
+
+    return candidates;
+}
+
+function cleanUrl(u) {
+    if (!u || typeof u !== "string") return "";
+    u = u.replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
+    if (u.indexOf("http") !== 0 && u.indexOf("//") === 0) u = "https:" + u;
+    if (u.indexOf("http") !== 0) return "";
+    return u;
+}
+
+// ------------------------------------------------------------
+// Utilidades
+// ------------------------------------------------------------
+
 function intOrZero(v) {
-    const n = parseInt(v, 10);
+    var n = parseInt(v, 10);
     return isNaN(n) ? 0 : n;
 }
 
@@ -423,16 +508,8 @@ function unescapeHtml(str) {
         .replace(/&gt;/g, ">");
 }
 
-function safeJsonUnescape(fragment) {
-    try {
-        return JSON.parse('"' + fragment + '"');
-    } catch (e) {
-        return fragment;
-    }
-}
-
 function parseDuration(str) {
-    const parts = str.split(":").map(Number);
+    var parts = str.split(":").map(Number);
     if (parts.length === 3) {
         return parts[0] * 3600 + parts[1] * 60 + parts[2];
     } else if (parts.length === 2) {
@@ -442,11 +519,11 @@ function parseDuration(str) {
 }
 
 function parseViewCount(str) {
-    const cleaned = str
+    var cleaned = str
         .replace(/&nbsp;/g, "")
         .replace(/\u00a0/g, "")
         .replace(/[^\d]/g, "");
-    const n = parseInt(cleaned, 10);
+    var n = parseInt(cleaned, 10);
     return isNaN(n) ? 0 : n;
 }
 
