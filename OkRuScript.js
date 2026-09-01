@@ -259,7 +259,7 @@ function posterFromHtml(block) {
     if (!m) m = block.match(/poster-src="([^"]+)"/);
     // 4) style con background-image
     if (!m) m = block.match(/background-image:\s*url\(['"]?([^'")]+)['"]?\)/);
-    // 5) atributo style con data-src de carga perezosa en <img>
+    // 5) <img src>
     if (!m) m = block.match(/<img[^>]+src="([^"]+)"/);
     // 6) carga perezosa: src no presente pero data-src sí (lazy-load)
     if (!m) m = block.match(/<img[^>]+data-src="([^"]+)"/);
@@ -299,25 +299,16 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
     const movie = metadata.movie || {};
     const author = metadata.author || {};
 
-    // RequestModifier: GrayJay lo usa tanto para la reproducción local
-    // como para el proxy de Chromecast.  OK.ru exige el header Referer
-    // en las peticiones al CDN (okcdn.ru).
-    // IMPORTANTE: modifyRequest recibe (url, headers) y debe devolver
-    // { url, headers, options } sin mutar el Map original de headers.
-    const okRequestModifier = {
-        modifyRequest: function(url, headers) {
-            return {
-                url: url,
-                headers: { "Referer": "https://ok.ru/" },
-                options: { applyOtherHeaders: true }
-            };
-        }
-    };
-
+    // Estilo YouTube: NO usamos requestModifier.  YouTube hace Cast
+    // perfecto porque sus URLs de CDN no requieren headers extra.
+    // Las URLs de OK.ru (okcdn.ru) estan firmadas y, como las de
+    // YouTube, deberian reproducirse sin headers personalizados.
+    // (Agregar requestModifier activa JSHttpDataSource y rompe la
+    //  reproduccion local de OK.ru, asi que lo evitamos como hace YT.)
     const sources = [];
     const seenUrls = {};
 
-    // ── HLS primero (mejor para Cast) ────────────────────────
+    // Buscar TODAS las URLs HLS posibles (HLS reproduce mejor en Cast)
     const hlsCandidates = [];
     const hlsKeys = [
         "hlsManifestUrl", "hlsMasterPlaylistUrl",
@@ -351,12 +342,11 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
         sources.push(new HLSSource({
             name: "HLS",
             url: u,
-            duration: intOrZero(movie.duration),
-            requestModifier: okRequestModifier
+            duration: intOrZero(movie.duration)
         }));
     }
 
-    // ── MP4 (fallback para reproducción local) ──────────────
+    // MP4 (fallback para reproduccion local)
     if (Array.isArray(metadata.videos)) {
         for (let i = 0; i < metadata.videos.length; i++) {
             const v = metadata.videos[i];
@@ -365,8 +355,7 @@ function buildVideoDetails(videoId, pageUrl, metadata) {
                 sources.push(new VideoUrlSource({
                     name: v.name || ("mp4-" + (i + 1)),
                     url: v.url,
-                    container: "video/mp4",
-                    requestModifier: okRequestModifier
+                    container: "video/mp4"
                 }));
             }
         }
