@@ -1,5 +1,5 @@
 /*
- * GrayJay - OK.ru Source v10
+ * GrayJay - OK.ru Source v11
  *
  * Objetivos:
  *  - Extraccion robusta OK.ru desktop/mobile.
