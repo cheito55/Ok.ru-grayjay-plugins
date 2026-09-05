@@ -42,7 +42,7 @@
     "userAgent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
     "loginUrl": "https://ok.ru/",
     "completionUrl": "https://ok.ru/feed*",
-    ""cookiesToFind": [
+    "cookiesToFind": [
     "JSESSIONID",
     "AUTHCODE",
     "domain_sid"
