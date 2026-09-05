@@ -1104,8 +1104,8 @@ function extractSearchResults(html) {
     let m;
 
     while ((m = re.exec(html)) !== null && results.length < 96) {
-        let start = Math.max(0, m.index - 3500);
-        let end = Math.min(html.length, re.lastIndex + 3500);
+        let start = Math.max(0, m.index - 400);
+        let end = Math.min(html.length, re.lastIndex + 400);
         addSearchCandidate(
             results, seen, m[2],
             html.substring(start, end),
@@ -1116,8 +1116,8 @@ function extractSearchResults(html) {
     // 2) data-movie-id / data-video-id blocks.
     let re2 = /(?:data-movie-id|data-video-id|data-content-id)\s*=\s*["']?(\d+)["']?/gi;
     while ((m = re2.exec(html)) !== null && results.length < 96) {
-        let start = Math.max(0, m.index - 2500);
-        let end = Math.min(html.length, re2.lastIndex + 4500);
+        let start = Math.max(0, m.index - 400);
+        let end = Math.min(html.length, re2.lastIndex + 600);
         addSearchCandidate(
             results, seen, m[1],
             html.substring(start, end),
@@ -1128,8 +1128,8 @@ function extractSearchResults(html) {
     // 3) JSON/escaped OK.ru video URLs.
     let re3 = /(?:https?:)?\\?\/\\?\/(?:www\.)?ok\.ru\\?\/(?:video|videoembed)\\?\/(\d+)/gi;
     while ((m = re3.exec(html)) !== null && results.length < 96) {
-        let start = Math.max(0, m.index - 2200);
-        let end = Math.min(html.length, re3.lastIndex + 2200);
+        let start = Math.max(0, m.index - 400);
+        let end = Math.min(html.length, re3.lastIndex + 400);
         addSearchCandidate(
             results, seen, m[1],
             html.substring(start, end),
@@ -1140,8 +1140,8 @@ function extractSearchResults(html) {
     // 4) Raw /video/<id> references.
     let re4 = /(?:^|["'(\s])\/video\/(\d+)(?:[?#"'()\s]|$)/gi;
     while ((m = re4.exec(html)) !== null && results.length < 96) {
-        let start = Math.max(0, m.index - 2200);
-        let end = Math.min(html.length, re4.lastIndex + 2200);
+        let start = Math.max(0, m.index - 400);
+        let end = Math.min(html.length, re4.lastIndex + 400);
         addSearchCandidate(
             results, seen, m[1],
             html.substring(start, end),
