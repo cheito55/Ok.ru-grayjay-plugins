@@ -43,9 +43,9 @@
     "loginUrl": "https://ok.ru/",
     "completionUrl": "https://ok.ru/feed*",
     "cookiesToFind": [
-      "JSESSIONID",
-      "AUTHCODE",
-      "domain_sid"
+      "812091636c82d75764aab85b9c2948355b6432ca9df987bb.46cde36c",
+      "7QRqjyPmNyVZRZ-GAeeHJtrGJbqhEQetKn8H8H6L_RwGjxM7zDCsOn2V2XP40x-x9PZc80QkyypgzL5USK1hc0zTlFaZy9588HrdCeLIHhAeVGBv8krPPXkeKp1HlWHAP0P1hV5Suavzua7GBQ_5",
+      "c50T0RmY5G6B7bBAXzmNB%3A1788115233512"
     ],
     "cookiesExclOthers": false
   }
