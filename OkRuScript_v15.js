@@ -164,27 +164,29 @@ function mergeHeaders(target, extra) {
     return target;
 }
 
-function httpGet(url, headers) {
+function httpGet(url, extraHeaders) {
     try {
-        let h = {
-            "User-Agent":
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/136.0.0.0 Safari/537.36",
+        let headers = {
+            "User-Agent": UA_DESKTOP,
             "Accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                "image/avif,image/webp,*/*;q=0.8",
+                "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
+            // AQUÍ DEBES INCRUSTAR TODAS TUS COOKIES ACTIVAS
+            "Cookie": "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5;"
         };
 
-        mergeHeaders(h, headers);
+        mergeHeaders(headers, extraHeaders);
 
-        let r = http.GET(url, h);
-        if (!r) return "";
+        let r = http.GET(url, headers);
+
+        if (!r) {
+            return "";
+        }
 
         let body = "";
+
         try {
             body = r.body;
         } catch (_) {}
@@ -198,13 +200,13 @@ function httpGet(url, headers) {
         body = safeStr(body);
 
         if (body.length > MAX_HTML_SIZE) {
-            addDebug("HTTP body capped: " + body.length);
             body = body.substring(0, MAX_HTML_SIZE);
         }
 
         return body;
+
     } catch (e) {
-        addDebug("httpGet: " + e);
+        addDebug("GET: " + e);
         return "";
     }
 }
