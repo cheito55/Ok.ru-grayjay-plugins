@@ -219,7 +219,7 @@ function httpGet(url, extraHeaders) {
                 "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
            "Cookie": "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5,"
         };
 
