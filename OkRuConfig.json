@@ -1,25 +1,27 @@
 {
-  "name": "OK.ru",
-  "description": "Reproductor de videos OK.ru (Odnoklassniki) dentro de GrayJay",
-  "author": "Lucas",
-  "authorUrl": "",
-  "platformUrl": "https://ok.ru",
-  "sourceUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuConfig.json",
-  "repositoryUrl": "https://github.com/cheito55/Ok.ru-grayjay-plugins",
-  "scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript_v1.js",
-  "version": 1,
-  "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/refs/heads/main/icon.png",
-  "id": "62af0e2f-bfd9-489f-afe1-f66583d2f7d0",
-  "scriptSignature": "",
-  "scriptPublicKey": "",
-  "packages": [
-    "Http",
-    "DOMParser",
-    "Utilities"
-  ],
-  "allowEval": false,
-  "allowUrls": [
-    "ok.ru",
+"name": "OK.ru",
+"description": "Plugin no oficial para reproducir videos de OK.ru (Odnoklassniki) dentro de GrayJay",
+"author": "Lucas",
+"authorUrl": "",
+
+"sourceUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuConfig.json",
+"repositoryUrl": "https://github.com/cheito55/Ok.ru-grayjay-plugins",
+"scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript_v1.js",
+"version": 1,
+
+"iconUrl": "",
+
+"id": "62af0e2f-bfd9-489f-afe1-f66583d2f7d0",
+
+"scriptSignature": "",
+"scriptPublicKey": "",
+
+"packages": ["Http", "DOMParser", "Utilities"],
+
+"allowEval": false,
+
+"allowUrls": [
+"ok.ru",
     "www.ok.ru",
     "m.ok.ru",
     "mobile.ok.ru",
@@ -37,16 +39,13 @@
     ".googlevideo.com",
     "jnn-pa.googleapis.com",
     ".c.youtube.com"
-  ],
-  "authentication": {
-    "userAgent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
-    "loginUrl": "https://ok.ru/",
-    "completionUrl": "https://ok.ru/feed*",
-    "cookiesToFind": [
-      "JSESSIONID",
-      "AUTHCODE",
-      "domain_sid"
-    ],
-    "cookiesExclOthers": false
-  }
+],
+
+"authentication": {
+"userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+"loginUrl": "https://ok.ru/",
+"completionUrl": "https://ok.ru/feed*",
+"cookiesToFind": ["JSESSIONID", "AUTHCODE", "domain_sid"],
+"cookiesExclOthers": false
+}
 }
