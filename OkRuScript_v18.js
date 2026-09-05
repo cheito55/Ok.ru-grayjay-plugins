@@ -1,20 +1,12 @@
 /*
- * GrayJay - OK.ru Source v18 (v5 search + current playback + hardcoded cookies)
- *
- * Stable OK.ru video extraction with:
- *  - desktop/mobile page fallback
- *  - authenticated request fallback (hardcoded cookies)
- *  - data-options / metadata / metadataUrl parsing
- *  - recursive HLS/MP4 discovery
- *  - defensive URL normalization/deduplication
- *  - direct HLS preference for casting
- *  - Xuper-compatible metadata fallback
- *  - bounded debugging
+ * GrayJay - OK.ru Source v18 (Expanded Full Version)
+ * Stable OK.ru video extraction with comprehensive parsing layers,
+ * recursive HLS/MP4 discovery, robust search parsing, and hardcoded authentication.
  */
 
 const PLATFORM_NAME = "OK.ru";
 const PLUGIN_ID = "62af0e2f-bfd9-489f-afe1-f66583d2f7d0";
-const VERSION = 18;
+const VERSION = 19;
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/i;
 const SEARCH_URL_BASE =
@@ -94,7 +86,6 @@ function normalizeUrl(s, base) {
     if (!s) return "";
 
     if (s.indexOf("//") === 0) return "https:" + s;
-
     if (/^https?:\/\//i.test(s)) return s;
 
     if (base) {
@@ -156,9 +147,8 @@ function mergeHeaders(target, extra) {
     return target;
 }
 
-
 /* ============================================================
- * HTTP (Modificado con Cookies Hardcodeadas)
+ * HTTP Request Handler con Cookies Inyectadas y Headers Ampliados
  * ============================================================ */
 
 function httpGet(url, extraHeaders) {
@@ -173,7 +163,6 @@ function httpGet(url, extraHeaders) {
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
             "Pragma": "no-cache",
-            // PEGA AQUÍ TODA TU CADENA DE COOKIES EN UNA SOLA LÍNEA HORIZONTAL:
             "Cookie": "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5;"
         };
 
@@ -293,7 +282,7 @@ function tryParseJson(value) {
 function extractDataOptions(html) {
     let out = [];
     let re =
-        /(?:data-options|data-options-json)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
+        /(?:data-options|data-options-json|data-stubs|data-player)\s*=\s*(?:"([^"]*)"|'([^']*)')/gi;
 
     let m;
     while ((m = re.exec(html || "")) !== null && out.length < 20) {
@@ -323,7 +312,8 @@ function findMetadataInObject(root, depth) {
         "movie",
         "movieData",
         "data",
-        "result"
+        "result",
+        "stubs"
     ];
 
     for (let i = 0; i < preferred.length; i++) {
@@ -339,7 +329,7 @@ function findMetadataInObject(root, depth) {
     }
 
     try {
-        if (root.metadataUrl || root.metadataURL) {
+        if (root.metadataUrl || root.metadataURL || root.playlistUrl) {
             return root;
         }
     } catch (_) {}
@@ -350,7 +340,7 @@ function findMetadataInObject(root, depth) {
             let value = root[key];
 
             if (
-                /metadata|flashvar|video|movie|media|stream|playlist/i.test(
+                /metadata|flashvar|video|movie|media|stream|playlist|player|stubs/i.test(
                     key
                 )
             ) {
@@ -442,7 +432,18 @@ function fetchMetadataUrl(meta, baseUrl) {
 function parseMetadata(html, pageUrl) {
     let meta = extractMetadataFromHtml(html);
 
-    if (!meta) return null;
+    if (!meta) {
+        let hlsUrls = [];
+        let abs = /https?:\/\/[^\s"'<>\\]+\.m3u8[^\s"'<>\\]*/gi;
+        let m;
+        while ((m = abs.exec(html)) !== null) {
+            pushUnique(hlsUrls, cleanUrl(m[0]));
+        }
+        if (hlsUrls.length > 0) {
+            return { hls: hlsUrls, title: "OK.ru video" };
+        }
+        return null;
+    }
 
     let fetched = fetchMetadataUrl(meta, pageUrl);
     if (fetched) return fetched;
@@ -466,8 +467,7 @@ function collectUrlsFromString(s, arr) {
         .replace(/\\\//g, "/")
         .replace(/&amp;/g, "&");
 
-    let abs =
-        /https?:\/\/[^\s"'<>\\]+/gi;
+    let abs = /https?:\/\/[^\s"'<>\\]+/gi;
 
     let m;
     while ((m = abs.exec(decoded)) !== null) {
@@ -572,6 +572,13 @@ function collectMp4UrlsFromObject(obj, arr, depth) {
 
 function collectHlsUrls(meta) {
     let urls = [];
+
+    if (meta.hls && Array.isArray(meta.hls)) {
+        for (let i = 0; i < meta.hls.length; i++) {
+            if (typeof meta.hls[i] === "string") pushUnique(urls, meta.hls[i]);
+            else if (meta.hls[i].url) pushUnique(urls, meta.hls[i].url);
+        }
+    }
 
     let preferred = [
         "hlsMasterPlaylistUrl",
@@ -962,7 +969,7 @@ function extractSearchResults(html) {
 
         try {
             let tm = block.match(
-                /(?:data-title|title)\s*=\s*["']([^"']+)["']/i
+                /(?:data-title|title|alt)\s*=\s*["']([^"']+)["']/i
             );
             if (tm) title = cleanText(tm[1]);
         } catch (_) {}
@@ -978,7 +985,7 @@ function extractSearchResults(html) {
 
         try {
             let pm = block.match(
-                /(?:data-options|poster|thumbnail|data-poster)\s*=\s*["']([^"']+)["']/i
+                /(?:src|data-src|poster|thumbnail|data-poster)\s*=\s*["']([^"']+\.(?:jpg|jpeg|png|webp)[^"']*)["']/i
             );
             if (pm) poster = normalizeUrl(pm[1]);
         } catch (_) {}
@@ -1005,29 +1012,13 @@ function extractSearchResults(html) {
 
         let url = "https://ok.ru/video/" + id;
 
-        try {
-            let details = new PlatformVideoDetails({
-                title: title || "OK.ru video " + id,
-                description: "",
-                duration: duration,
-                thumbnail: poster,
-                videoSources: null
-            });
-
-            results.push({
-                id: id,
-                url: url,
-                details: details
-            });
-        } catch (_) {
-            results.push({
-                id: id,
-                url: url,
-                title: title || "OK.ru video " + id,
-                thumbnail: poster,
-                duration: duration
-            });
-        }
+        results.push({
+            id: id,
+            url: url,
+            title: title || "OK.ru video " + id,
+            thumbnail: poster,
+            duration: duration
+        });
     }
 
     return results;
@@ -1035,8 +1026,7 @@ function extractSearchResults(html) {
 
 function searchOk(query) {
     let url = SEARCH_URL_BASE + encodeURIComponent(safeStr(query));
-    let html = httpGetAuthenticated(url);
-    if (!html) html = httpGet(url);
+    let html = httpGet(url);
     if (!html) throw new Error("OK.ru search returned no data");
 
     let raw = extractSearchResults(html);
@@ -1057,17 +1047,18 @@ function searchOk(query) {
                 isLive: false,
                 extractType: "Video"
             }));
-        } catch (_) {}
+        } catch (e) {
+            addDebug("search PlatformVideo failed: " + e);
+        }
     }
 
-    return new VideoPager(videos, videos.length > 0 && false);
+    return new VideoPager(videos, false);
 }
 
 function searchSuggestions(query) {
     try {
         let url = SEARCH_URL_BASE + encodeURIComponent(safeStr(query));
-        let html = httpGetAuthenticated(url);
-        if (!html) html = httpGet(url);
+        let html = httpGet(url);
         if (!html) return [];
         let raw = extractSearchResults(html);
         let out = [];
@@ -1087,13 +1078,10 @@ function doDetails(url) {
     let id = extractVideoId(url);
     if (!id) throw new Error("Invalid OK.ru video URL");
 
-    let canonical =
-        "https://ok.ru/video/" + id;
-
+    let canonical = "https://ok.ru/video/" + id;
     addDebug("Video ID: " + id);
 
     let html = loadOkPage(canonical);
-
     if (!html) {
         throw new Error("Unable to load OK.ru video page");
     }
@@ -1103,15 +1091,11 @@ function doDetails(url) {
     }
 
     let meta = parseMetadata(html, canonical);
-
     if (!meta) {
-        throw new Error(
-            "OK.ru metadata not found. Debug:\n" + debugText()
-        );
+        throw new Error("OK.ru metadata not found. Debug:\n" + debugText());
     }
 
     let fallbackTitle = "OK.ru video " + id;
-
     return buildVideoDetails(meta, canonical, fallbackTitle);
 }
 
