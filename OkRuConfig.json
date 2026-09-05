@@ -1,14 +1,14 @@
 {
   "name": "OK.ru",
-  "description": "Reproductor de videos de OK.ru (Odnoklassniki) dentro de GrayJay",
-  "author": "Lucas",
-  "authorUrl": "",
+  "description": "Plugin no oficial para reproducir videos de OK.ru en GrayJay, sin videos embebidos de YouTube.",
+  "author": "OK.ru Source",
+  "authorUrl": "https://ok.ru",
   "platformUrl": "https://ok.ru",
-  "sourceUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuConfig.json",
-  "repositoryUrl": "https://github.com/cheito55/Ok.ru-grayjay-plugins",
-  "scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript_v12_CAST.js",
-  "version": 13,
-  "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/refs/heads/main/icon.png",
+  "sourceUrl": "https://ok.ru/",
+  "repositoryUrl": "https://ok.ru/",
+  "scriptUrl": "./OkRuScript_v21_CAST_NoYouTube_LocalSession.js",
+  "version": 10,
+  "iconUrl": "https://ok.ru/favicon.ico",
   "id": "62af0e2f-bfd9-489f-afe1-f66583d2f7d0",
   "scriptSignature": "",
   "scriptPublicKey": "",
@@ -22,31 +22,6 @@
     "ok.ru",
     "www.ok.ru",
     "m.ok.ru",
-    "mobile.ok.ru",
-    "youtube.com",
-    "www.youtube.com",
-    "m.youtube.com",
-    "youtu.be",
-    "www.youtu.be",
-    "m.youtu.be",
-    "s.youtube.com",
-    "consent.youtube.com",
-    "youtubei.googleapis.com",
-    "www.google.com",
-    "google.com",
-    ".googlevideo.com",
-    "jnn-pa.googleapis.com",
-    ".c.youtube.com"
-  ],
-  "authentication": {
-    "userAgent": "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.230 Mobile Safari/537.36",
-    "loginUrl": "https://ok.ru/",
-    "completionUrl": "https://ok.ru/feed*",
-    "cookiesToFind": [
-    "JSESSIONID",
-    "AUTHCODE",
-    "domain_sid"
-    ],
-    "cookiesExclOthers": false
-  }
+    "mobile.ok.ru"
+  ]
 }
