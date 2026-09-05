@@ -1,23 +1,15 @@
 /*
- * GrayJay - OK.ru Source v18 (v5 search + current playback)
+ * GrayJay - OK.ru Source v18 (v5 search + current playback + hardcoded cookies)
  *
  * Stable OK.ru video extraction with:
  *  - desktop/mobile page fallback
- *  - authenticated request fallback
+ *  - authenticated request fallback (hardcoded cookies)
  *  - data-options / metadata / metadataUrl parsing
  *  - recursive HLS/MP4 discovery
  *  - defensive URL normalization/deduplication
  *  - direct HLS preference for casting
  *  - Xuper-compatible metadata fallback
  *  - bounded debugging
- *
- * Important:
- * The Xuper APK contains fields such as play_params, verificationToken,
- * playlistUrl and signdata. This source deliberately does NOT invent a
- * signing algorithm or a private Xuper endpoint. If OK metadata exposes a
- * valid playlistUrl/playable URL, it is consumed directly. Otherwise the
- * normal OK.ru HLS path is used. This avoids returning an intermediate
- * player page to Cast.
  */
 
 const PLATFORM_NAME = "OK.ru";
@@ -164,24 +156,30 @@ function mergeHeaders(target, extra) {
     return target;
 }
 
-function httpGet(url, headers) {
+
+/* ============================================================
+ * HTTP (Modificado con Cookies Hardcodeadas)
+ * ============================================================ */
+
+function httpGet(url, extraHeaders) {
     try {
-        let h = {
+        let headers = {
             "User-Agent":
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/136.0.0.0 Safari/537.36",
             "Accept":
-                "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                "image/avif,image/webp,*/*;q=0.8",
+                "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
             "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
+            // PEGA AQUÍ TODA TU CADENA DE COOKIES EN UNA SOLA LÍNEA HORIZONTAL:
+            "Cookie": "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5;"
         };
 
-        mergeHeaders(h, headers);
+        mergeHeaders(headers, extraHeaders);
 
-        let r = http.GET(url, h);
+        let r = http.GET(url, headers);
         if (!r) return "";
 
         let body = "";
@@ -210,28 +208,7 @@ function httpGet(url, headers) {
 }
 
 function httpGetAuthenticated(url) {
-    try {
-        let r = http.GET(url);
-        if (!r) return "";
-
-        let body = "";
-        try {
-            body = r.body;
-        } catch (_) {}
-
-        if (!body) {
-            try {
-                body = r.getBody();
-            } catch (_) {}
-        }
-
-        body = safeStr(body);
-        if (body.length > MAX_HTML_SIZE) body = body.substring(0, MAX_HTML_SIZE);
-        return body;
-    } catch (e) {
-        addDebug("authenticated GET: " + e);
-        return "";
-    }
+    return httpGet(url);
 }
 
 function loadOkPage(url) {
@@ -416,7 +393,6 @@ function extractMetadataFromHtml(html) {
         } catch (_) {}
     }
 
-    // Last-resort JSON candidate scan.
     let starts = [];
     for (let i = 0; i < html.length && starts.length < 80; i++) {
         if (html.charAt(i) === "{") starts.push(i);
@@ -722,7 +698,6 @@ function getDuration(meta) {
     let n = parseFloat(v);
     if (!isFinite(n) || n <= 0) return 0;
 
-    // GrayJay commonly expects seconds.
     if (n > 100000) n = n / 1000;
     else if (n > 1000 && n < 100000) n = n / 1000;
 
@@ -742,19 +717,6 @@ function getAuthorName(meta) {
     );
 }
 
-/*
- * Xuper-compatible fallback.
- *
- * Verified APK field names include:
- *   play_params
- *   verificationToken / verification_token
- *   playlistUrl
- *   signdata
- *
- * We only consume a playlist URL that is already present in metadata.
- * We intentionally do not fabricate a signer, token generator, or private
- * Xuper endpoint because those are implementation-specific.
- */
 function xuperGetPlayParams(meta) {
     return firstValue(meta, ["play_params", "playParams"]);
 }
@@ -777,7 +739,6 @@ function xuperResolve(meta) {
     let direct = xuperGetPlaylistUrl(meta);
     if (isM3u8Url(direct)) return normalizeUrl(direct);
 
-    // Some responses nest the Xuper fields.
     let containers = [
         meta.xuper,
         meta.data,
@@ -911,7 +872,6 @@ function buildVideoDetails(meta, pageUrl, fallbackTitle) {
 
     let hls = [];
 
-    // Xuper-compatible direct playlist is deliberately first.
     let xuperPlaylist = xuperResolve(meta);
     if (isM3u8Url(xuperPlaylist)) pushUnique(hls, xuperPlaylist);
 
@@ -925,13 +885,11 @@ function buildVideoDetails(meta, pageUrl, fallbackTitle) {
 
     let sources = [];
 
-    // HLS first: this is the most reliable path for GrayJay and Cast.
     for (let i = 0; i < hls.length; i++) {
         let src = makeHlsSource(hls[i], headers);
         if (src) sources.push(src);
     }
 
-    // MP4 only as fallback.
     if (sources.length === 0) {
         for (let i = 0; i < mp4.length; i++) {
             let src = makeMp4Source(mp4[i], headers);
@@ -1062,8 +1020,6 @@ function extractSearchResults(html) {
                 details: details
             });
         } catch (_) {
-            // Search details are intentionally lightweight; getVideoDetails
-            // performs the authoritative extraction when opened.
             results.push({
                 id: id,
                 url: url,
@@ -1078,8 +1034,6 @@ function extractSearchResults(html) {
 }
 
 function searchOk(query) {
-    // SEARCH ENGINE: intentionally kept from the original stable v5.
-    // Do not resolve playback here. Search only extracts IDs/metadata.
     let url = SEARCH_URL_BASE + encodeURIComponent(safeStr(query));
     let html = httpGetAuthenticated(url);
     if (!html) html = httpGet(url);
@@ -1088,8 +1042,6 @@ function searchOk(query) {
     let raw = extractSearchResults(html);
     let videos = [];
 
-    // IMPORTANT: return a plain JS array, like the original working source.
-    // The current GrayJay bridge can wrap these PlatformVideo objects itself.
     for (let i = 0; i < raw.length; i++) {
         let r = raw[i];
         try {
@@ -1105,35 +1057,28 @@ function searchOk(query) {
                 isLive: false,
                 extractType: "Video"
             }));
-        } catch (e) {
-            addDebug("search PlatformVideo failed: " + e);
-        }
+        } catch (_) {}
     }
-    return videos;
+
+    return new VideoPager(videos, videos.length > 0 && false);
 }
 
 function searchSuggestions(query) {
-    let results = [];
-
     try {
-        let found = searchOk(query);
-        for (let i = 0; i < found.length && results.length < 10; i++) {
-            let r = found[i];
-            let title = r.title || "";
-
-            if (r.details) {
-                try {
-                    title = r.details.title || title;
-                } catch (_) {}
-            }
-
-            if (title) results.push(title);
+        let url = SEARCH_URL_BASE + encodeURIComponent(safeStr(query));
+        let html = httpGetAuthenticated(url);
+        if (!html) html = httpGet(url);
+        if (!html) return [];
+        let raw = extractSearchResults(html);
+        let out = [];
+        for (let i = 0; i < raw.length && out.length < 10; i++) {
+            let t = safeStr(raw[i].title);
+            if (t) out.push(t);
         }
-    } catch (e) {
-        addDebug("suggestions: " + e);
+        return out;
+    } catch (_) {
+        return [];
     }
-
-    return results;
 }
 
 function doDetails(url) {
@@ -1153,7 +1098,6 @@ function doDetails(url) {
         throw new Error("Unable to load OK.ru video page");
     }
 
-    // External providers are noted but not used as a source.
     if (isExternalProvider(html)) {
         addDebug("External provider reference detected");
     }
@@ -1166,17 +1110,6 @@ function doDetails(url) {
         );
     }
 
-    addDebug(
-        "Xuper fields: play_params=" +
-        (xuperGetPlayParams(meta) ? "yes" : "no") +
-        ", verificationToken=" +
-        (xuperGetVerificationToken(meta) ? "yes" : "no") +
-        ", playlistUrl=" +
-        (xuperGetPlaylistUrl(meta) ? "yes" : "no") +
-        ", signdata=" +
-        (xuperGetSignature(meta) ? "yes" : "no")
-    );
-
     let fallbackTitle = "OK.ru video " + id;
 
     return buildVideoDetails(meta, canonical, fallbackTitle);
@@ -1184,9 +1117,7 @@ function doDetails(url) {
 
 /* ------------------------- GrayJay bindings ------------------------- */
 
-source.setSettings = function (settings) {
-    // Kept for compatibility with GrayJay versions that expect setSettings.
-};
+source.setSettings = function (settings) {};
 
 source.enable = function () {
     return true;
@@ -1233,7 +1164,7 @@ source.getContentDetails = function (url) {
 };
 
 source.getHome = function () {
-    return [];
+    return new VideoPager([], false);
 };
 
 source.isChannelUrl = function (url) {
