@@ -994,10 +994,12 @@ function buildVideoDetails(meta, pageUrl, fallbackTitle) {
             isUnMuxed: false,
             videoSources: sources
         });
-    } catch (_) {}
+    } catch (e) {
+        addDebug("MuxVideoSourceDescriptor: " + e);
+    }
 
     if (!descriptor) {
-        throw new Error("MuxVideoSourceDescriptor unavailable");
+        throw new Error("MuxVideoSourceDescriptor unavailable\n" + debugText());
     }
 
     let firstHls = null;
