@@ -917,7 +917,7 @@ function buildSourceHeaders(meta) {
 }
 
 
-function buildVideoDetails(meta, pageUrl, fallbackTitle) {
+function buildVideoDetails(meta, pageUrl, fallbackTitle, html) {
     if (!safeObj(meta)) throw new Error("No metadata");
 
     let title = getTitle(meta, fallbackTitle);
@@ -956,6 +956,11 @@ function buildVideoDetails(meta, pageUrl, fallbackTitle) {
     }
 
     if (sources.length === 0) {
+        if (containsExternalVideoEmbed(html)) {
+            throw new Error(
+                "Este video es un embed de YouTube, búscalo por su plugin"
+            );
+        }
         throw new Error(
             "No playable direct HLS/MP4 source found\n" + debugText()
         );
@@ -996,10 +1001,16 @@ function buildVideoDetails(meta, pageUrl, fallbackTitle) {
         });
     } catch (e) {
         addDebug("MuxVideoSourceDescriptor: " + e);
+
+        try {
+            descriptor = new VideoSourceDescriptor(sources);
+        } catch (e2) {
+            addDebug("VideoSourceDescriptor: " + e2);
+        }
     }
 
     if (!descriptor) {
-        throw new Error("MuxVideoSourceDescriptor unavailable\n" + debugText());
+        throw new Error("No video source descriptor available\n" + debugText());
     }
 
     let firstHls = null;
@@ -1309,7 +1320,7 @@ function doDetails(url) {
 
     let fallbackTitle = "OK.ru video " + id;
 
-    return buildVideoDetails(meta, canonical, fallbackTitle);
+    return buildVideoDetails(meta, canonical, fallbackTitle, html);
 }
 
 /* ------------------------- GrayJay bindings ------------------------- */
