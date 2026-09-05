@@ -47,7 +47,7 @@ const UA_MOBILE =
  * No compartas el archivo una vez que hayas puesto la cookie real.
  * La cookie solo se envia a ok.ru; nunca a YouTube.
  */
-const EMBEDDED_OK_COOKIE = "REPLACE_WITH_YOUR_OK_RU_COOKIE";
+const EMBEDDED_OK_COOKIE = "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5;";
 
 let DEBUG = [];
 
