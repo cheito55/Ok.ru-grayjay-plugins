@@ -6,7 +6,7 @@
   "platformUrl": "https://ok.ru",
   "sourceUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuConfig.json",
   "repositoryUrl": "https://github.com/cheito55/Ok.ru-grayjay-plugins",
-  "scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript_v25.js",
+  "scriptUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/main/OkRuScript_v1.js",
   "version": 2,
   "iconUrl": "https://raw.githubusercontent.com/cheito55/Ok.ru-grayjay-plugins/refs/heads/main/icon.png",
   "id": "62af0e2f-bfd9-489f-afe1-f66583d2f7d0",
@@ -47,6 +47,6 @@
       "1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5",
       "c50T0RmY5G6B7bBAXzmNB%3A1788115233512"
     ],
-    "cookiesExclOthers": true
+    "cookiesExclOthers": false
   }
 }
