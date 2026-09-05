@@ -26,7 +26,7 @@ const PLATFORM_NAME = "OK.ru";
 const PLUGIN_ID = "62af0e2f-bfd9-489f-afe1-f66583d2f7d0";
 
 // Cookie local de OK.ru. Sustituye el placeholder por tu propia cookie.
-const EMBEDDED_OK_COOKIE = "REPLACE_WITH_YOUR_OK_RU_COOKIE";
+const EMBEDDED_OK_COOKIE = "JSESSIONID=8e2c2999590bc859a0a2b753ba3c4a76dab8f7a5fde5d9bf.43f3c308; AUTHCODE=1t0LE3mgF-zTAiOgD7sZg4QFTJxWbjmY8dLFMhs_HGlGNUiPiuOaEc_Ntmp_L9oJozni2j31wNG_TRo5Cvn-V7kZaoqJmPBhARjHjQtjt6K9Wxdmbae1wwTJphr9uwl7F-MnOPRWhD8YRC5euQ_5;";
 
 const REGEX_VIDEO_URL = /ok\.ru\/(?:video|videoembed)\/(\d+)/i;
 const SEARCH_URL_BASE =
